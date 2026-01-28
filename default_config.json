@@ -1,0 +1,27 @@
+{
+  "modelDir": "./models",
+  "autoOpenWebEnabled": true,
+  "notifications": true,
+  "basePort": 8080,
+  "autoLoadModels": [],
+  "defaultArgs": [
+    "--prio-batch", "3",
+    "--no-host",
+    "--ctx-size", "131072",
+    "--batch-size", "4096",
+    "--ubatch-size", "4096",
+    "--threads", "0",
+    "--threads-batch", "0",
+    "-ngl", "999",
+    "--flash-attn", "on",
+    "--cache-type-k", "f16",
+    "--cache-type-v", "f16",
+    "--kv-offload",
+    "--no-repack",
+    "--direct-io",
+    "--mlock",
+    "--split-mode", "layer",
+    "--main-gpu", "0"
+  ],
+  "modelSpecificArgs": {}
+}
