@@ -29,7 +29,7 @@ The embedded llama-server is compiled specifically for ROCm GFX1151 architecture
 
 ### Installation
 
-1. **Download the executable**: `lmgo.exe` is a standalone executable
+1. **Download the executable**: [`lmgo.exe`](https://github.com/zyoung11/lmgo/releases) is a standalone executable
 2. **Create a models directory**: Create a `models` folder in the same directory as `lmgo.exe`
 3. **Place your models**: Copy your .gguf model files to the `models` directory
 

@@ -30,7 +30,7 @@ lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，
 
 ### 安装
 
-1. **下载可执行文件**：`lmgo.exe` 是独立可执行文件
+1. **下载可执行文件**：[`lmgo.exe`](https://github.com/zyoung11/lmgo/releases) 是独立可执行文件
 2. **创建模型目录**：在 `lmgo.exe` 所在目录创建 `models` 文件夹
 3. **放置模型文件**：将您的 .gguf 模型文件复制到 `models` 目录
 
