@@ -563,7 +563,9 @@ func refreshMenuState() {
 			runningModelsMu.RUnlock()
 
 			if instanceCount > 0 {
-				title = fmt.Sprintf("%s [Loaded x%d]", title, instanceCount)
+				title = fmt.Sprintf("● [Loaded x%d] %s", instanceCount, title)
+			} else {
+				title = fmt.Sprintf("○ %s", title)
 			}
 
 			item.SetTitle(title)
