@@ -153,6 +153,8 @@ The application creates a `lmgo.json` configuration file with the following stru
 
 ## Building from Source
 
+Download [`llama_cpp_rocm_gfx1151.tar.gz`](https://github.com/zyoung11/lmgo/releases) first and then
+
 ```bash
 go mod tidy
 go build -ldflags "-s -w -H windowsgui" -buildvcs=false .

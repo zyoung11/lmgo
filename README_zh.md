@@ -154,6 +154,8 @@ lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，
 
 ## 从源代码构建
 
+需要先下载 [`llama_cpp_rocm_gfx1151.tar.gz`](https://github.com/zyoung11/lmgo/releases) 然后
+
 ```bash
 go mod tidy
 go build -ldflags "-s -w -H windowsgui" -buildvcs=false .
