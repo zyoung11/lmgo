@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -629,6 +630,9 @@ func stopModelInstance(instance *modelInstance) {
 		instance.cmd = nil
 	}
 
+	// Wait for server to completely shut down by polling the /models endpoint
+	waitForModelShutdown(instance)
+
 	time.Sleep(500 * time.Millisecond)
 }
 
@@ -704,7 +708,8 @@ func runLlamaServer(instance *modelInstance) {
 		return
 	}
 
-	time.Sleep(3 * time.Second)
+	// Wait for model to finish loading by polling the /models endpoint
+	waitForModelLoad(instance)
 
 	if config.Notifications {
 		if err := extractIconForNotification(); err != nil {
@@ -878,4 +883,68 @@ func findGGUFFiles(dir string) ([]modelEntry, error) {
 	}
 
 	return result, nil
+}
+
+func waitForModelLoad(instance *modelInstance) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	url := fmt.Sprintf("http://127.0.0.1:%d/models", instance.port)
+
+	timeout := time.After(5 * time.Minute)
+	ticker := time.NewTicker(500 * time.Millisecond)
+
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			resp, err := client.Get(url)
+			if err != nil {
+				continue
+			}
+			defer resp.Body.Close()
+
+			body, _ := io.ReadAll(resp.Body)
+
+			var responseMap map[string]interface{}
+			if err := json.Unmarshal(body, &responseMap); err == nil {
+				if errorObj, ok := responseMap["error"].(map[string]interface{}); ok {
+					if msg, msgOk := errorObj["message"].(string); msgOk && msg == "Loading model" {
+						continue
+					}
+				}
+			}
+
+			log.Printf("Model %s finished loading on port %d", instance.entry.display, instance.port)
+			return
+
+		case <-timeout:
+			log.Printf("Timeout waiting for model %s to load on port %d", instance.entry.display, instance.port)
+			return
+		}
+	}
+}
+
+func waitForModelShutdown(instance *modelInstance) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	url := fmt.Sprintf("http://127.0.0.1:%d/models", instance.port)
+
+	timeout := time.After(30 * time.Second)
+	ticker := time.NewTicker(200 * time.Millisecond)
+
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			_, err := client.Get(url)
+			if err != nil {
+				log.Printf("Model %s confirmed shutdown on port %d", instance.entry.display, instance.port)
+				return
+			}
+
+		case <-timeout:
+			log.Printf("Timeout waiting for model %s to shutdown on port %d", instance.entry.display, instance.port)
+			return
+		}
+	}
 }
