@@ -46,9 +46,8 @@ type Config struct {
 var config Config
 
 var (
-	runningModels   = make(map[string]*modelInstance)
+	runningModel    *modelInstance
 	runningModelsMu sync.RWMutex
-	modelCounter    int
 
 	currentModels []modelEntry
 
@@ -57,11 +56,9 @@ var (
 	iconTempPath        string
 
 	menuItems struct {
-		selectModel  *systray.MenuItem
+		loadModel    *systray.MenuItem
 		unloadModel  *systray.MenuItem
-		unloadItems  []*systray.MenuItem
 		webInterface *systray.MenuItem
-		webItems     []*systray.MenuItem
 		autostart    *systray.MenuItem
 		quit         *systray.MenuItem
 		models       []*systray.MenuItem
@@ -77,10 +74,9 @@ type modelEntry struct {
 }
 
 type modelInstance struct {
-	entry       modelEntry
-	cmd         *exec.Cmd
-	port        int
-	instanceNum int
+	entry modelEntry
+	cmd   *exec.Cmd
+	port  int
 }
 
 var shardRe = regexp.MustCompile(`^(.+)-(\d{5})-of-(\d{5})\.gguf$`)
@@ -383,11 +379,8 @@ func autoLoadModels() {
 
 				alreadyLoaded := false
 				runningModelsMu.RLock()
-				for _, instance := range runningModels {
-					if instance.entry.firstPart == model.firstPart {
-						alreadyLoaded = true
-						break
-					}
+				if runningModel != nil && runningModel.entry.firstPart == model.firstPart {
+					alreadyLoaded = true
 				}
 				runningModelsMu.RUnlock()
 
@@ -462,11 +455,11 @@ func sendStartupNotification() {
 }
 
 func buildMenuOnce() {
-	menuItems.selectModel = systray.AddMenuItem("Load Model", "Select model to load")
+	menuItems.loadModel = systray.AddMenuItem("Load Model", "Select model to load")
 
 	maxModels := 100
 	for i := 0; i < maxModels; i++ {
-		item := menuItems.selectModel.AddSubMenuItem("", "")
+		item := menuItems.loadModel.AddSubMenuItem("", "")
 		item.Hide()
 		menuItems.models = append(menuItems.models, item)
 
@@ -477,35 +470,23 @@ func buildMenuOnce() {
 		}(i, item)
 	}
 
-	menuItems.unloadModel = systray.AddMenuItem("Unload Model", "Select model to unload")
+	menuItems.unloadModel = systray.AddMenuItem("Unload Current Model", "Unload the currently loaded model")
 	menuItems.unloadModel.Disable()
 
-	maxRunning := 20
-	for i := 0; i < maxRunning; i++ {
-		item := menuItems.unloadModel.AddSubMenuItem("", "")
-		item.Hide()
-		menuItems.unloadItems = append(menuItems.unloadItems, item)
+	go func() {
+		for range menuItems.unloadModel.ClickedCh {
+			unloadModel()
+		}
+	}()
 
-		go func(idx int, menuItem *systray.MenuItem) {
-			for range menuItem.ClickedCh {
-				unloadModelByMenuIndex(idx)
-			}
-		}(i, item)
-	}
-	menuItems.webInterface = systray.AddMenuItem("Web Interface", "Open web interface for loaded models")
+	menuItems.webInterface = systray.AddMenuItem("Web Interface", "Open web interface for current model")
 	menuItems.webInterface.Disable()
 
-	for i := 0; i < maxRunning; i++ {
-		item := menuItems.webInterface.AddSubMenuItem("", "")
-		item.Hide()
-		menuItems.webItems = append(menuItems.webItems, item)
-
-		go func(idx int, menuItem *systray.MenuItem) {
-			for range menuItem.ClickedCh {
-				openModelWebInterfaceByMenuIndex(idx)
-			}
-		}(i, item)
-	}
+	go func() {
+		for range menuItems.webInterface.ClickedCh {
+			openCurrentModelWebInterface()
+		}
+	}()
 
 	systray.AddSeparator()
 
@@ -529,7 +510,7 @@ func buildMenuOnce() {
 	menuItems.quit = systray.AddMenuItem("Exit", "Exit program")
 	go func() {
 		for range menuItems.quit.ClickedCh {
-			stopAllModels()
+			unloadModel()
 			systray.Quit()
 		}
 	}()
@@ -537,10 +518,10 @@ func buildMenuOnce() {
 
 func refreshMenuState() {
 	runningModelsMu.RLock()
-	count := len(runningModels)
+	hasRunningModel := runningModel != nil
 	runningModelsMu.RUnlock()
 
-	if count > 0 {
+	if hasRunningModel {
 		menuItems.unloadModel.Enable()
 		menuItems.webInterface.Enable()
 	} else {
@@ -554,16 +535,11 @@ func refreshMenuState() {
 			title := m.display
 
 			runningModelsMu.RLock()
-			instanceCount := 0
-			for _, instance := range runningModels {
-				if instance.entry.firstPart == m.firstPart {
-					instanceCount++
-				}
-			}
+			isCurrent := hasRunningModel && runningModel.entry.firstPart == m.firstPart
 			runningModelsMu.RUnlock()
 
-			if instanceCount > 0 {
-				title = fmt.Sprintf("● [Loaded x%d] %s", instanceCount, title)
+			if isCurrent {
+				title = fmt.Sprintf("● %s", title)
 			} else {
 				title = fmt.Sprintf("○ %s", title)
 			}
@@ -575,121 +551,19 @@ func refreshMenuState() {
 			item.Hide()
 		}
 	}
-
-	refreshWebInterfaceMenu()
-
-	refreshUnloadMenu()
 }
 
-func refreshWebInterfaceMenu() {
+func openCurrentModelWebInterface() {
 	runningModelsMu.RLock()
 	defer runningModelsMu.RUnlock()
 
-	type kv struct {
-		key string
-		val *modelInstance
-	}
-	var instances []kv
-	for k, v := range runningModels {
-		instances = append(instances, kv{k, v})
-	}
-
-	for i := 0; i < len(instances); i++ {
-		for j := i + 1; j < len(instances); j++ {
-			if instances[i].val.port > instances[j].val.port {
-				instances[i], instances[j] = instances[j], instances[i]
-			}
-		}
-	}
-
-	for i, item := range menuItems.webItems {
-		if i < len(instances) {
-			inst := instances[i].val
-			displayName := inst.entry.display
-			if inst.instanceNum > 1 {
-				displayName = fmt.Sprintf("%s #%d", displayName, inst.instanceNum)
-			}
-			title := fmt.Sprintf("%s (Port:%d)", displayName, inst.port)
-
-			item.SetTitle(title)
-			item.SetTooltip(fmt.Sprintf("Open web interface for %s", displayName))
-			item.Show()
-		} else {
-			item.Hide()
-		}
-	}
-}
-
-func openModelWebInterfaceByMenuIndex(menuIdx int) {
-	runningModelsMu.RLock()
-
-	type kv struct {
-		key string
-		val *modelInstance
-	}
-	var instances []kv
-	for k, v := range runningModels {
-		instances = append(instances, kv{k, v})
-	}
-
-	for i := 0; i < len(instances); i++ {
-		for j := i + 1; j < len(instances); j++ {
-			if instances[i].val.port > instances[j].val.port {
-				instances[i], instances[j] = instances[j], instances[i]
-			}
-		}
-	}
-
-	if menuIdx >= len(instances) {
-		runningModelsMu.RUnlock()
+	if runningModel == nil {
 		return
 	}
 
-	instance := instances[menuIdx].val
-	runningModelsMu.RUnlock()
-
-	url := fmt.Sprintf("http://127.0.0.1:%d", instance.port)
+	url := fmt.Sprintf("http://127.0.0.1:%d", runningModel.port)
 	if err := openBrowser(url); err != nil {
 		log.Printf("Failed to open browser: %v", err)
-	}
-}
-
-func refreshUnloadMenu() {
-	runningModelsMu.RLock()
-	defer runningModelsMu.RUnlock()
-
-	type kv struct {
-		key string
-		val *modelInstance
-	}
-	var instances []kv
-	for k, v := range runningModels {
-		instances = append(instances, kv{k, v})
-	}
-
-	for i := 0; i < len(instances); i++ {
-		for j := i + 1; j < len(instances); j++ {
-			if instances[i].val.port > instances[j].val.port {
-				instances[i], instances[j] = instances[j], instances[i]
-			}
-		}
-	}
-
-	for i, item := range menuItems.unloadItems {
-		if i < len(instances) {
-			inst := instances[i].val
-			displayName := inst.entry.display
-			if inst.instanceNum > 1 {
-				displayName = fmt.Sprintf("%s #%d", displayName, inst.instanceNum)
-			}
-			title := fmt.Sprintf("%s (Port:%d)", displayName, inst.port)
-
-			item.SetTitle(title)
-			item.SetTooltip(fmt.Sprintf("Unload %s", displayName))
-			item.Show()
-		} else {
-			item.Hide()
-		}
 	}
 }
 
@@ -701,26 +575,23 @@ func loadModel(idx int) {
 	entry := currentModels[idx]
 
 	runningModelsMu.Lock()
-	instanceNum := 1
-	for _, inst := range runningModels {
-		if inst.entry.firstPart == entry.firstPart {
-			if inst.instanceNum >= instanceNum {
-				instanceNum = inst.instanceNum + 1
-			}
-		}
+
+	if runningModel != nil {
+		stopModelInstance(runningModel)
+
+		runningModelsMu.Unlock()
+		time.Sleep(1 * time.Second)
+		runningModelsMu.Lock()
 	}
 
-	port := config.BasePort + modelCounter
-	modelCounter++
+	port := config.BasePort
 
 	instance := &modelInstance{
-		entry:       entry,
-		port:        port,
-		instanceNum: instanceNum,
+		entry: entry,
+		port:  port,
 	}
 
-	key := fmt.Sprintf("%s#%d", entry.firstPart, instanceNum)
-	runningModels[key] = instance
+	runningModel = instance
 	runningModelsMu.Unlock()
 
 	go runLlamaServer(instance)
@@ -728,74 +599,45 @@ func loadModel(idx int) {
 	refreshMenuState()
 }
 
-func unloadModelByMenuIndex(menuIdx int) {
+func unloadModel() {
 	runningModelsMu.Lock()
 
-	type kv struct {
-		key string
-		val *modelInstance
-	}
-	var instances []kv
-	for k, v := range runningModels {
-		instances = append(instances, kv{k, v})
+	if runningModel != nil {
+		stopModelInstance(runningModel)
+		runningModel = nil
 	}
 
-	for i := 0; i < len(instances); i++ {
-		for j := i + 1; j < len(instances); j++ {
-			if instances[i].val.port > instances[j].val.port {
-				instances[i], instances[j] = instances[j], instances[i]
-			}
-		}
-	}
-
-	if menuIdx >= len(instances) {
-		runningModelsMu.Unlock()
-		return
-	}
-
-	key := instances[menuIdx].key
-	instance := instances[menuIdx].val
 	runningModelsMu.Unlock()
-
-	stopModelInstance(instance)
-
-	runningModelsMu.Lock()
-	delete(runningModels, key)
-	runningModelsMu.Unlock()
-
 	refreshMenuState()
 }
 
 func stopModelInstance(instance *modelInstance) {
 	if instance.cmd != nil && instance.cmd.Process != nil {
+		pid := instance.cmd.Process.Pid
+
 		if err := instance.cmd.Process.Kill(); err != nil {
 			log.Printf("Failed to kill llama-server process (port %d): %v", instance.port, err)
 		} else {
-			_, waitErr := instance.cmd.Process.Wait()
+			processState, waitErr := instance.cmd.Process.Wait()
 			if waitErr != nil {
 				log.Printf("Error waiting for process to exit (port %d): %v", instance.port, waitErr)
 			} else {
-				log.Printf("Stopped model %s (port %d)", instance.entry.display, instance.port)
+				log.Printf("Stopped model %s (port %d), PID: %d, Exit Code: %v",
+					instance.entry.display, instance.port, pid, processState.ExitCode())
 			}
 		}
 		instance.cmd = nil
 	}
+
+	time.Sleep(500 * time.Millisecond)
 }
 
 func stopAllModels() {
 	runningModelsMu.Lock()
-	instances := make([]*modelInstance, 0, len(runningModels))
-	for _, v := range runningModels {
-		instances = append(instances, v)
+	if runningModel != nil {
+		stopModelInstance(runningModel)
+		runningModel = nil
 	}
-	runningModelsMu.Unlock()
-
-	for _, inst := range instances {
-		stopModelInstance(inst)
-	}
-
-	runningModelsMu.Lock()
-	runningModels = make(map[string]*modelInstance)
 	runningModelsMu.Unlock()
 }
 
@@ -850,11 +692,8 @@ func runLlamaServer(instance *modelInstance) {
 		}
 
 		runningModelsMu.Lock()
-		for k, v := range runningModels {
-			if v == instance {
-				delete(runningModels, k)
-				break
-			}
+		if runningModel == instance {
+			runningModel = nil
 		}
 		runningModelsMu.Unlock()
 
@@ -865,25 +704,24 @@ func runLlamaServer(instance *modelInstance) {
 		return
 	}
 
-	go func() {
-		time.Sleep(1 * time.Second)
-		if config.Notifications {
-			if err := extractIconForNotification(); err != nil {
-				log.Printf("Warning: Failed to extract icon: %v", err)
-			}
+	time.Sleep(3 * time.Second)
 
-			notification := toast.Notification{
-				AppID:   "lmgo Server",
-				Title:   "Model Loaded Successfully",
-				Message: fmt.Sprintf("Model '%s' loaded successfully\nPort: %d", instance.entry.display, instance.port),
-				Icon:    iconTempPath,
-			}
-
-			if notifyErr := notification.Push(); notifyErr != nil {
-				log.Printf("Failed to send load success notification: %v", notifyErr)
-			}
+	if config.Notifications {
+		if err := extractIconForNotification(); err != nil {
+			log.Printf("Warning: Failed to extract icon: %v", err)
 		}
-	}()
+
+		notification := toast.Notification{
+			AppID:   "lmgo Server",
+			Title:   "Model Loaded Successfully",
+			Message: fmt.Sprintf("Model '%s' loaded successfully\nPort: %d", instance.entry.display, instance.port),
+			Icon:    iconTempPath,
+		}
+
+		if notifyErr := notification.Push(); notifyErr != nil {
+			log.Printf("Failed to send load success notification: %v", notifyErr)
+		}
+	}
 
 	err := cmd.Wait()
 	if err != nil {
@@ -907,11 +745,8 @@ func runLlamaServer(instance *modelInstance) {
 		}
 
 		runningModelsMu.Lock()
-		for k, v := range runningModels {
-			if v == instance {
-				delete(runningModels, k)
-				break
-			}
+		if runningModel == instance {
+			runningModel = nil
 		}
 		runningModelsMu.Unlock()
 
