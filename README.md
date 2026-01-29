@@ -18,7 +18,7 @@ The embedded llama-server is compiled specifically for ROCm GFX1151 architecture
 
 - **System Tray Interface**: Runs in the Windows system tray for easy access
 - **Automatic Model Discovery**: Scans directories for .gguf model files
-- **Multiple Model Support**: Load and run multiple models simultaneously on different ports
+- **Single Model Support**: Load and run one model at a time
 - **Web Interface**: Built-in web interface for each loaded model
 - **Auto-start on Boot**: Option to start automatically with Windows
 - **Notifications**: Windows toast notifications for model status
@@ -43,8 +43,8 @@ The embedded llama-server is compiled specifically for ROCm GFX1151 architecture
 
 1. **Right-click the tray icon** to access the menu
 2. **Load Model**: Select "Load Model" → choose a model from the list
-3. **Access Web Interface**: Once loaded, select "Web Interface" → choose the model
-4. **Unload Model**: Select "Unload Model" → choose the model to stop
+3. **Access Web Interface**: Once loaded, select "Web Interface" to open the model's web UI
+4. **Unload Model**: Select "Unload Current Model" to stop the currently loaded model
 
 ## Configuration
 
@@ -85,8 +85,8 @@ The application creates a `lmgo.json` configuration file with the following stru
 - **modelDir**: Directory containing .gguf model files
 - **autoOpenWebEnabled**: Automatically open browser when model loads
 - **notifications**: Enable Windows toast notifications
-- **basePort**: Starting port number for models (8080, 8081, 8082, etc.)
-- **autoLoadModels**: Array of model names to load automatically on startup
+- **basePort**: Port number for the model (default: 8080)
+- **autoLoadModels**: Model name to load automatically on startup (only one model supported)
 - **defaultArgs**: Default arguments passed to llama-server
 - **modelSpecificArgs**: Custom arguments for specific models
 
@@ -95,17 +95,15 @@ The application creates a `lmgo.json` configuration file with the following stru
 ### Load Model
 - Lists all discovered .gguf files in the models directory
 - Shows sharded models as single entries
-- Indicates already loaded models with "[Loaded xN]"
+- If a model is already loaded, it will be unloaded first
 
-### Unload Model
-- Lists all currently running models
-- Shows port numbers for each instance
-- Allows stopping individual model instances
+### Unload Current Model
+- Stops the currently loaded model
+- Menu item is enabled only when a model is running
 
 ### Web Interface
-- Lists web interfaces for loaded models
-- Opens browser to model's web UI
-- Shows port numbers for navigation
+- Opens browser to the loaded model's web UI
+- Menu item is enabled only when a model is running
 
 ### Start on Boot
 - Toggle for automatic startup with Windows
@@ -125,8 +123,7 @@ The application creates a `lmgo.json` configuration file with the following stru
 
 ### Model Handling
 - Supports both single-file and sharded (.gguf) models
-- Automatic port assignment starting from basePort
-- Instance counting for multiple loads of same model
+- Single model at a time (loading new model unloads current one)
 - Graceful cleanup on exit
 
 ### System Integration
