@@ -107,28 +107,73 @@ func main() {
 }
 
 func sendErrorNotificationAndExit(message string) {
+	log.Printf("Fatal error: %s", message)
+	sendNotification("lmgo Server Error", message)
+	time.Sleep(2 * time.Second)
+	os.Exit(1)
+}
+
+func sendNotification(title, message string) {
 	if !config.Notifications {
-		log.Printf("Error: %s", message)
-		os.Exit(1)
+		return
 	}
 
 	if err := extractIconForNotification(); err != nil {
-		log.Printf("Warning: Failed to extract icon: %v", err)
+		handleWarning(err, "Failed to extract icon")
 	}
 
 	notification := toast.Notification{
 		AppID:   "lmgo Server",
-		Title:   "lmgo Server Error",
+		Title:   title,
 		Message: message,
 		Icon:    iconTempPath,
 	}
 
 	if err := notification.Push(); err != nil {
-		log.Printf("Failed to send error notification: %v", err)
+		handleWarning(err, "Failed to send notification")
+	}
+}
+
+func handleWarning(err error, context ...string) {
+	if err == nil {
+		return
 	}
 
-	time.Sleep(2 * time.Second)
+	message := err.Error()
+	if len(context) > 0 {
+		message = fmt.Sprintf("%s: %v", context[0], err)
+	}
 
+	log.Printf("Warning: %s", message)
+}
+
+func handleError(err error, context ...string) {
+	if err == nil {
+		return
+	}
+
+	message := err.Error()
+	if len(context) > 0 {
+		message = fmt.Sprintf("%s: %v", context[0], err)
+	}
+
+	log.Printf("Error: %s", message)
+	sendNotification("lmgo Server Error", message)
+}
+
+func handleFatalError(err error, context ...string) {
+	if err == nil {
+		os.Exit(1)
+	}
+
+	message := err.Error()
+	if len(context) > 0 {
+		message = fmt.Sprintf("%s: %v", context[0], err)
+	}
+
+	log.Printf("Fatal error: %s", message)
+	sendNotification("lmgo Server Error", message)
+	time.Sleep(2 * time.Second)
 	os.Exit(1)
 }
 
@@ -242,7 +287,7 @@ func cleanupEmbeddedServer() {
 
 	if iconTempPath != "" {
 		if err := os.Remove(iconTempPath); err != nil {
-			log.Printf("Failed to clean up temp icon file: %v", err)
+			handleWarning(err, "Failed to clean up temp icon file")
 		} else {
 			log.Printf("Cleaned up temp icon file: %s", iconTempPath)
 		}
@@ -254,7 +299,7 @@ func cleanupEmbeddedServer() {
 	}
 
 	if err := os.RemoveAll(fixedTempDir); err != nil {
-		log.Printf("Failed to clean up temp server directory: %v", err)
+		handleWarning(err, "Failed to clean up temp server directory")
 
 		tempName := fixedTempDir + ".old." + strconv.FormatInt(time.Now().Unix(), 10)
 		if renameErr := os.Rename(fixedTempDir, tempName); renameErr == nil {
@@ -399,7 +444,7 @@ func autoLoadModels() {
 		if !found {
 			if config.Notifications {
 				if err := extractIconForNotification(); err != nil {
-					log.Printf("Warning: Failed to extract icon: %v", err)
+					handleWarning(err, "Failed to extract icon")
 				}
 
 				notification := toast.Notification{
@@ -410,7 +455,7 @@ func autoLoadModels() {
 				}
 
 				if notifyErr := notification.Push(); notifyErr != nil {
-					log.Printf("Failed to send model not found notification: %v", notifyErr)
+					handleWarning(notifyErr, "Failed to send model not found notification")
 				}
 			}
 
@@ -438,7 +483,7 @@ func sendStartupNotification() {
 	}
 
 	if err := extractIconForNotification(); err != nil {
-		log.Printf("Warning: %v", err)
+		handleWarning(err, "Failed to extract icon")
 	}
 
 	notification := toast.Notification{
@@ -450,7 +495,7 @@ func sendStartupNotification() {
 
 	go func() {
 		if err := notification.Push(); err != nil {
-			log.Printf("Failed to send notification: %v", err)
+			handleWarning(err, "Failed to send notification")
 		}
 	}()
 }
@@ -564,7 +609,7 @@ func openCurrentModelWebInterface() {
 
 	url := fmt.Sprintf("http://127.0.0.1:%d", runningModel.port)
 	if err := openBrowser(url); err != nil {
-		log.Printf("Failed to open browser: %v", err)
+		handleError(err, "Failed to open browser")
 	}
 }
 
@@ -617,11 +662,11 @@ func stopModelInstance(instance *modelInstance) {
 		pid := instance.cmd.Process.Pid
 
 		if err := instance.cmd.Process.Kill(); err != nil {
-			log.Printf("Failed to kill llama-server process (port %d): %v", instance.port, err)
+			handleWarning(err, fmt.Sprintf("Failed to kill llama-server process (port %d)", instance.port))
 		} else {
 			processState, waitErr := instance.cmd.Process.Wait()
 			if waitErr != nil {
-				log.Printf("Error waiting for process to exit (port %d): %v", instance.port, waitErr)
+				handleWarning(waitErr, fmt.Sprintf("Error waiting for process to exit (port %d)", instance.port))
 			} else {
 				log.Printf("Stopped model %s (port %d), PID: %d, Exit Code: %v",
 					instance.entry.display, instance.port, pid, processState.ExitCode())
@@ -676,11 +721,11 @@ func runLlamaServer(instance *modelInstance) {
 	runningModelsMu.Unlock()
 
 	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to start llama-server (port %d): %v", instance.port, err)
+		handleWarning(err, fmt.Sprintf("Failed to start llama-server (port %d)", instance.port))
 
 		if config.Notifications {
 			if err := extractIconForNotification(); err != nil {
-				log.Printf("Warning: Failed to extract icon: %v", err)
+				handleWarning(err, "Failed to extract icon")
 			}
 
 			notification := toast.Notification{
@@ -691,7 +736,7 @@ func runLlamaServer(instance *modelInstance) {
 			}
 
 			if notifyErr := notification.Push(); notifyErr != nil {
-				log.Printf("Failed to send load failure notification: %v", notifyErr)
+				handleWarning(notifyErr, "Failed to send load failure notification")
 			}
 		}
 
@@ -713,7 +758,7 @@ func runLlamaServer(instance *modelInstance) {
 
 	if config.Notifications {
 		if err := extractIconForNotification(); err != nil {
-			log.Printf("Warning: Failed to extract icon: %v", err)
+			handleWarning(err, "Failed to extract icon")
 		}
 
 		notification := toast.Notification{
@@ -724,17 +769,17 @@ func runLlamaServer(instance *modelInstance) {
 		}
 
 		if notifyErr := notification.Push(); notifyErr != nil {
-			log.Printf("Failed to send load success notification: %v", notifyErr)
+			handleWarning(notifyErr, "Failed to send load success notification")
 		}
 	}
 
 	err := cmd.Wait()
 	if err != nil {
-		log.Printf("llama-server (port %d) exited abnormally: %v", instance.port, err)
+		handleWarning(err, fmt.Sprintf("llama-server (port %d) exited abnormally", instance.port))
 
 		if config.Notifications {
 			if err := extractIconForNotification(); err != nil {
-				log.Printf("Warning: Failed to extract icon: %v", err)
+				handleWarning(err, "Failed to extract icon")
 			}
 
 			notification := toast.Notification{
@@ -745,7 +790,7 @@ func runLlamaServer(instance *modelInstance) {
 			}
 
 			if notifyErr := notification.Push(); notifyErr != nil {
-				log.Printf("Failed to send model stopped notification: %v", notifyErr)
+				handleWarning(notifyErr, "Failed to send model stopped notification")
 			}
 		}
 
@@ -768,7 +813,7 @@ func isAutostartEnabled() bool {
 	k, err := registry.OpenKey(registry.CURRENT_USER,
 		`Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE)
 	if err != nil {
-		log.Printf("Failed to open registry: %v", err)
+		handleWarning(err, "Failed to open registry")
 		return false
 	}
 	defer k.Close()
@@ -787,21 +832,21 @@ func toggleAutostart() {
 		`Software\Microsoft\Windows\CurrentVersion\Run`,
 		registry.SET_VALUE|registry.QUERY_VALUE)
 	if err != nil {
-		log.Printf("Failed to open registry: %v", err)
+		handleWarning(err, "Failed to open registry")
 		return
 	}
 	defer k.Close()
 
 	exePath, err := os.Executable()
 	if err != nil {
-		log.Printf("Failed to get executable path: %v", err)
+		handleWarning(err, "Failed to get executable path")
 		return
 	}
 
 	if menuItems.autostart.Checked() {
 		err = k.DeleteValue("LLMServerTray")
 		if err != nil {
-			log.Printf("Failed to delete registry value: %v", err)
+			handleWarning(err, "Failed to delete registry value")
 		} else {
 			menuItems.autostart.Uncheck()
 			log.Println("Disabled auto-start on boot")
@@ -809,7 +854,7 @@ func toggleAutostart() {
 	} else {
 		err = k.SetStringValue("LLMServerTray", fmt.Sprintf(`"%s"`, exePath))
 		if err != nil {
-			log.Printf("Failed to set registry value: %v", err)
+			handleWarning(err, "Failed to set registry value")
 		} else {
 			menuItems.autostart.Check()
 			log.Println("Enabled auto-start on boot")
