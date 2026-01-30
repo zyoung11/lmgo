@@ -31,4 +31,4 @@ go.work.sum
 # .idea/
 # .vscode/
 lmgo.json
-llama_cpp_rocm_gfx1151.tar.gz
+llama-*-windows-rocm-gfx1151-x64.zip

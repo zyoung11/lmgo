@@ -151,7 +151,7 @@ lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，
 
 ## 从源代码构建
 
-需要先下载 [`llama_cpp_rocm_gfx1151.tar.gz`](https://github.com/zyoung11/lmgo/releases) 然后
+需要先下载最新的 [`llama-b*-windows-rocm-gfx1151-x64.zip`](https://github.com/zyoung11/lmgo/releases) 文件从 [releases](https://github.com/zyoung11/lmgo/releases) 然后
 
 ```bash
 go mod tidy
@@ -161,4 +161,4 @@ go build -ldflags "-s -w -H windowsgui" -buildvcs=false .
 ### 嵌入式资源
 - `favicon.ico`：使用 `//go:embed` 嵌入
 - `default_config.json`：嵌入式默认配置
-- `llama_cpp_rocm_gfx1151.tar.gz`：嵌入式 llama-server 二进制文件
+- `llama-b*-windows-rocm-gfx1151-x64.zip`：嵌入式 llama-server 二进制文件及其依赖

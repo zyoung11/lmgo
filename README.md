@@ -150,7 +150,7 @@ The application creates a `lmgo.json` configuration file with the following stru
 
 ## Building from Source
 
-Download [`llama_cpp_rocm_gfx1151.tar.gz`](https://github.com/zyoung11/lmgo/releases) first and then
+Download the latest [`llama-b*-windows-rocm-gfx1151-x64.zip`](https://github.com/zyoung11/lmgo/releases) file from [releases](https://github.com/zyoung11/lmgo/releases) first and then
 
 ```bash
 go mod tidy
@@ -160,4 +160,4 @@ go build -ldflags "-s -w -H windowsgui" -buildvcs=false .
 ### Embedded Resources
 - `favicon.ico`: Embedded using `//go:embed`
 - `default_config.json`: Embedded default configuration
-- `llama_cpp_rocm_gfx1151.tar.gz`: Embedded llama-server binary
+- `llama-b*-windows-rocm-gfx1151-x64.zip`: Embedded llama-server binary and dependencies

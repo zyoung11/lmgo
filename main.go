@@ -1,10 +1,9 @@
 package main
 
 import (
-	"archive/tar"
+	"archive/zip"
 	"bytes"
-	"compress/gzip"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,8 +27,8 @@ import (
 //go:embed favicon.ico
 var iconData []byte
 
-//go:embed llama_cpp_rocm_gfx1151.tar.gz
-var serverArchive []byte
+//go:embed *.zip
+var serverArchives embed.FS
 
 //go:embed default_config.json
 var defaultConfigData []byte
@@ -269,15 +268,29 @@ func initializeEmbeddedServer() error {
 		return fmt.Errorf("Failed to create temp directory: %v", err)
 	}
 
-	if err := extractTarGz(serverArchive, tempBase); err != nil {
+	entries, err := serverArchives.ReadDir(".")
+	if err != nil {
+		return fmt.Errorf("Failed to read embedded zip files: %v", err)
+	}
+	if len(entries) != 1 {
+		return fmt.Errorf("Expected exactly one embedded zip file, found %d", len(entries))
+	}
+
+	zipFileName := entries[0].Name()
+	zipData, err := serverArchives.ReadFile(zipFileName)
+	if err != nil {
+		return fmt.Errorf("Failed to read embedded zip file %s: %v", zipFileName, err)
+	}
+
+	if err := extractZip(zipData, tempBase); err != nil {
 		os.RemoveAll(tempBase)
 		return fmt.Errorf("Failed to extract server files: %v", err)
 	}
 
-	tempLlamaServerPath = filepath.Join(tempBase, "llama_cpp_rocm_gfx1151", "llama-server.exe")
+	tempLlamaServerPath = filepath.Join(tempBase, "llama-server.exe")
 	fixedTempDir = tempBase
 
-	log.Printf("Server extracted to: %s", tempLlamaServerPath)
+	log.Printf("Server extracted to: %s (from %s)", tempLlamaServerPath, zipFileName)
 	return nil
 }
 
@@ -326,45 +339,47 @@ func cleanupEmbeddedServer() {
 	fixedTempDir = ""
 }
 
-func extractTarGz(data []byte, dest string) error {
-	gzr, err := gzip.NewReader(bytes.NewReader(data))
+func extractZip(data []byte, dest string) error {
+	zipReader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return err
 	}
-	defer gzr.Close()
 
-	tr := tar.NewReader(gzr)
+	for _, file := range zipReader.File {
+		target := filepath.Join(dest, file.Name)
 
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+			continue
 		}
+
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+
+		dstFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, file.Mode())
 		if err != nil {
 			return err
 		}
 
-		target := filepath.Join(dest, header.Name)
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
-			if err != nil {
-				return err
-			}
-
-			if _, err := io.Copy(f, tr); err != nil {
-				f.Close()
-				return err
-			}
-
-			f.Close()
+		srcFile, err := file.Open()
+		if err != nil {
+			dstFile.Close()
+			return err
 		}
+
+		if _, err := io.Copy(dstFile, srcFile); err != nil {
+			srcFile.Close()
+			dstFile.Close()
+			return err
+		}
+
+		srcFile.Close()
+		dstFile.Close()
 	}
+
 	return nil
 }
 
