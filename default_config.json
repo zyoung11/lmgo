@@ -3,7 +3,7 @@
   "autoOpenWebEnabled": true,
   "notifications": true,
   "basePort": 8080,
-  "autoLoadModels": [],
+  "autoLoadModels": "",
   "defaultArgs": [
     "--prio-batch", "3",
     "--no-host",

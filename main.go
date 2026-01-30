@@ -40,7 +40,7 @@ type Config struct {
 	DefaultArgs       []string            `json:"defaultArgs"`
 	ModelSpecificArgs map[string][]string `json:"modelSpecificArgs"`
 	Notifications     bool                `json:"notifications"`
-	AutoLoadModels    []string            `json:"autoLoadModels"`
+	AutoLoadModels    string              `json:"autoLoadModels"`
 }
 
 var config Config
@@ -425,57 +425,56 @@ func onReady() {
 }
 
 func autoLoadModels() {
-	if len(config.AutoLoadModels) == 0 {
+	if config.AutoLoadModels == "" {
 		return
 	}
 
 	time.Sleep(1 * time.Second)
 
-	for _, modelName := range config.AutoLoadModels {
-		found := false
-		for i, model := range currentModels {
-			if strings.Contains(model.display, modelName) || model.display == modelName ||
-				strings.Contains(filepath.Base(model.firstPart), modelName) {
-				found = true
+	modelName := config.AutoLoadModels
+	found := false
+	for i, model := range currentModels {
+		if strings.Contains(model.display, modelName) || model.display == modelName ||
+			strings.Contains(filepath.Base(model.firstPart), modelName) {
+			found = true
 
-				alreadyLoaded := false
-				runningModelsMu.RLock()
-				if runningModel != nil && runningModel.entry.firstPart == model.firstPart {
-					alreadyLoaded = true
-				}
-				runningModelsMu.RUnlock()
+			alreadyLoaded := false
+			runningModelsMu.RLock()
+			if runningModel != nil && runningModel.entry.firstPart == model.firstPart {
+				alreadyLoaded = true
+			}
+			runningModelsMu.RUnlock()
 
-				if !alreadyLoaded {
-					loadModel(i)
-					log.Printf("Auto-loading model: %s", model.display)
-				} else {
-					log.Printf("Model already loaded, skipping: %s", model.display)
-				}
+			if !alreadyLoaded {
+				loadModel(i)
+				log.Printf("Auto-loading model: %s", model.display)
+			} else {
+				log.Printf("Model already loaded, skipping: %s", model.display)
+			}
 
-				break
+			break
+		}
+	}
+
+	if !found {
+		if config.Notifications {
+			if err := extractIconForNotification(); err != nil {
+				handleWarning(err, "Failed to extract icon")
+			}
+
+			notification := toast.Notification{
+				AppID:   "lmgo Server",
+				Title:   "Auto-load model not found",
+				Message: fmt.Sprintf("Model specified in config not found: %s\nThis model will not be loaded", modelName),
+				Icon:    iconTempPath,
+			}
+
+			if notifyErr := notification.Push(); notifyErr != nil {
+				handleWarning(notifyErr, "Failed to send model not found notification")
 			}
 		}
 
-		if !found {
-			if config.Notifications {
-				if err := extractIconForNotification(); err != nil {
-					handleWarning(err, "Failed to extract icon")
-				}
-
-				notification := toast.Notification{
-					AppID:   "lmgo Server",
-					Title:   "Auto-load model not found",
-					Message: fmt.Sprintf("Model specified in config not found: %s\nThis model will not be loaded", modelName),
-					Icon:    iconTempPath,
-				}
-
-				if notifyErr := notification.Push(); notifyErr != nil {
-					handleWarning(notifyErr, "Failed to send model not found notification")
-				}
-			}
-
-			log.Printf("Auto-load model not found: %s", modelName)
-		}
+		log.Printf("Auto-load model not found: %s", modelName)
 	}
 }
 
@@ -516,7 +515,7 @@ func sendStartupNotification() {
 }
 
 func buildMenuOnce() {
-	menuItems.loadModel = systray.AddMenuItem("Load Model", "Select model to load")
+	menuItems.loadModel = systray.AddMenuItem("Load Model", "Select a model to load")
 
 	maxModels := 100
 	for i := 0; i < maxModels; i++ {
@@ -531,7 +530,7 @@ func buildMenuOnce() {
 		}(i, item)
 	}
 
-	menuItems.unloadModel = systray.AddMenuItem("Unload Current Model", "Unload the currently loaded model")
+	menuItems.unloadModel = systray.AddMenuItem("Unload Model", "Unload the model")
 	menuItems.unloadModel.Disable()
 
 	go func() {
@@ -540,7 +539,7 @@ func buildMenuOnce() {
 		}
 	}()
 
-	menuItems.webInterface = systray.AddMenuItem("Web Interface", "Open web interface for current model")
+	menuItems.webInterface = systray.AddMenuItem("Web Interface", "Open web interface")
 	menuItems.webInterface.Disable()
 
 	go func() {
