@@ -2,7 +2,12 @@
 
 [English README](README.md)
 
-lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，用于通过 llama.cpp 服务器和 **ROCm** GPU 加速运行本地大语言模型。该软件专门针对配备 **AMD RYZEN AI MAX+ 395 / Radeon 8060S**的系统进行了优化。
+lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cpp 服务器和 **ROCm** GPU 加速。它包含：
+
+- **lmgo**: Windows 系统托盘应用程序，提供模型管理
+- **lmc**: 基于 BubbleTea 的终端控制界面
+
+该软件专门针对配备 **AMD RYZEN AI MAX+ 395 / Radeon 8060S**的系统进行了优化。
 
 ## 系统要求
 
@@ -17,6 +22,8 @@ lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，
 
 ## 功能特性
 
+### lmgo (系统托盘)
+
 - **系统托盘界面**：在 Windows 系统托盘中运行，便于访问
 - **自动模型发现**：扫描目录中的 .gguf 模型文件
 - **单模型支持**：一次只能加载和运行一个模型
@@ -26,26 +33,12 @@ lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，
 - **模型特定配置**：为不同模型提供自定义参数
 - **自动浏览器启动**：模型加载时自动打开 Web 界面
 
-## 快速开始
+### lmc (终端 UI)
 
-### 安装
-
-1. **下载可执行文件**：[`lmgo.exe`](https://github.com/zyoung11/lmgo/releases) 是独立可执行文件
-2. **创建模型目录**：在 `lmgo.exe` 所在目录创建 `models` 文件夹
-3. **放置模型文件**：将您的 .gguf 模型文件复制到 `models` 目录
-
-### 首次运行
-
-1. **运行 lmgo.exe**：双击可执行文件
-2. **配置**：首次运行时将创建默认的 `lmgo.json` 配置文件
-3. **系统托盘**：应用程序将出现在系统托盘（通知区域）
-
-### 使用应用程序
-
-1. **右键单击托盘图标** 访问菜单
-2. **加载模型**：选择"Load Model" → 从列表中选择模型
-3. **访问 Web 界面**：加载后，选择"Web Interface" 打开模型的 Web UI
-4. **卸载模型**：选择"Unload Current Model" 停止当前加载的模型
+- **终端界面**：基于 TUI 的模型管理，支持键盘快捷键
+- **实时状态**：实时显示模型加载/卸载状态
+- **API 集成**：与 lmgo 的 REST API 通信进行模型控制
+- **键盘绑定**：直观的键盘控制（方向键、Enter、U、Q）
 
 ## 配置
 
@@ -55,10 +48,10 @@ lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，
 {
   "modelDir": "./models",
   "autoOpenWebEnabled": true,
-  "notifications": true,
   "basePort": 8080,
-  "autoLoadModels": [],
+  "llamaServerPort": 8081,
   "defaultArgs": [
+    "--host", "0.0.0.0",
     "--prio-batch", "3",
     "--no-host",
     "--ctx-size", "131072",
@@ -71,6 +64,7 @@ lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，
     "--cache-type-k", "f16",
     "--cache-type-v", "f16",
     "--kv-offload",
+    "--no-mmap",
     "--no-repack",
     "--direct-io",
     "--mlock",
@@ -85,71 +79,20 @@ lmgo 是一个 Windows 系统托盘应用程序，提供易于使用的界面，
 
 - **modelDir**：包含 .gguf 模型文件的目录
 - **autoOpenWebEnabled**：模型加载时自动打开浏览器
-- **notifications**：启用 Windows 通知
-- **basePort**：模型的端口号（默认：8080）
-- **autoLoadModels**：启动时自动加载的模型名称（仅支持一个模型）
+- **basePort**：API 服务器端口（默认：8080）- 由 lmc 和 HTTP API 使用
+- **llamaServerPort**：llama-server 端口（默认：8081）- 模型运行端口
 - **defaultArgs**：传递给 llama-server 的默认参数
 - **modelSpecificArgs**：特定模型的自定义参数
 
-## 菜单选项
+### API 端点
 
-### 加载模型
-- 列出模型目录中发现的所有 .gguf 文件
-- 将分片模型显示为单个条目
-- 如果已有模型加载，会先卸载当前模型
+- `GET /api/models` - 列出所有可用模型
+- `GET /api/status` - 获取当前模型状态
+- `POST /api/load?index=N` - 加载索引为 N 的模型
+- `POST /api/unload` - 卸载当前模型
+- `GET /api/health` - 健康检查
 
-### 卸载当前模型
-- 停止当前加载的模型
-- 仅当有模型运行时菜单项才启用
-
-### Web 界面
-- 打开浏览器访问已加载模型的 Web UI
-- 仅当有模型运行时菜单项才启用
-
-### 开机自启
-- 切换 Windows 自动启动
-- 添加/删除自动启动的注册表项
-
-### 退出
-- 停止所有运行中的模型
-- 清理临时文件
-- 退出应用程序
-
-## 技术细节
-
-### 内置组件
-- **llama-server**：为 ROCm GFX1151 自定义编译的版本
-- **图标**：嵌入的 favicon.ico 用于托盘和通知
-- **配置**：针对 AMD 硬件优化的默认设置
-
-### 模型处理
-- 支持单文件和分片 (.gguf) 模型
-- 一次只能运行一个模型（加载新模型会卸载当前模型）
-- 退出时的优雅清理
-
-### 系统集成
-- Windows 注册表用于自动启动配置
-- 通过 systray 库实现系统托盘集成
-- Windows 通知
-- 默认隐藏控制台窗口
-
-## 故障排除
-
-### 常见问题
-
-1. **"未找到 .gguf 文件"**
-   - 确保模型在正确的目录中（默认：`./models`）
-   - 检查文件扩展名是否为 `.gguf`
-2. **模型加载失败**
-   - 验证模型与 llama.cpp 的兼容性
-   - 检查可用磁盘空间和内存
-3. **Web 界面无法访问**
-   - 检查防火墙设置
-   - 验证端口是否被阻止
-4. **应用程序无法启动**
-   - 验证系统要求（Windows 11、AMD RYZEN AI MAX+ 395 / Radeon 8060S）
-
-## 从源代码构建
+## 从源代码构建 lmgo (系统托盘)
 
 需要先下载最新的 [`llama-b*-windows-rocm-gfx1151-x64.zip`](https://github.com/zyoung11/lmgo/releases) 文件从 [releases](https://github.com/zyoung11/lmgo/releases) 然后
 
@@ -158,7 +101,10 @@ go mod tidy
 go build -ldflags "-s -w -H windowsgui" -buildvcs=false .
 ```
 
-### 嵌入式资源
-- `favicon.ico`：使用 `//go:embed` 嵌入
-- `default_config.json`：嵌入式默认配置
-- `llama-b*-windows-rocm-gfx1151-x64.zip`：嵌入式 llama-server 二进制文件及其依赖
+## 从源代码构建 lmc (终端 UI)
+
+```bash
+cd lmc
+go mod tidy
+go build -buildvcs=false .
+```
