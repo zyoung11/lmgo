@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -47,6 +48,7 @@ var (
 	currentModels []modelEntry
 
 	serverPath string
+	apiServer  *http.Server
 
 	menuItems struct {
 		loadModel    *systray.MenuItem
@@ -58,14 +60,27 @@ var (
 )
 
 type modelEntry struct {
-	path     string
-	baseName string
+	Path     string `json:"path"`
+	BaseName string `json:"baseName"`
 }
 
 type modelInstance struct {
 	entry modelEntry
 	cmd   *exec.Cmd
 	port  int
+}
+
+type APIResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
+}
+
+type ModelStatus struct {
+	Loaded     bool       `json:"loaded"`
+	Model      modelEntry `json:"model,omitempty"`
+	Port       int        `json:"port,omitempty"`
+	ServerPort int        `json:"serverPort,omitempty"`
 }
 
 func main() {
@@ -87,6 +102,8 @@ func main() {
 	if len(currentModels) == 0 {
 		log.Fatalf("No .gguf files found in directory: %s", config.ModelDir)
 	}
+
+	startAPIServer()
 
 	systray.Run(onReady, onExit)
 }
@@ -223,12 +240,198 @@ func extractZip(data []byte, dest string) error {
 	return nil
 }
 
+// ==================== RESTful API ====================
+
+func startAPIServer() {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/models", handleModels)
+	mux.HandleFunc("/api/status", handleStatus)
+	mux.HandleFunc("/api/load", handleLoad)
+	mux.HandleFunc("/api/unload", handleUnload)
+	mux.HandleFunc("/api/health", handleHealth)
+
+	apiServer = &http.Server{
+		Addr:    fmt.Sprintf(":%d", config.BasePort),
+		Handler: corsMiddleware(mux),
+	}
+
+	go func() {
+		log.Printf("API server starting on port %d", config.BasePort)
+		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("API server error: %v", err)
+		}
+	}()
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+func handleModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, APIResponse{
+			Success: false,
+			Message: "Method not allowed",
+		})
+		return
+	}
+
+	models := make([]map[string]interface{}, len(currentModels))
+	for i, m := range currentModels {
+		models[i] = map[string]interface{}{
+			"index":    i,
+			"name":     m.BaseName,
+			"path":     m.Path,
+			"filename": filepath.Base(m.Path),
+		}
+	}
+
+	writeJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data:    models,
+	})
+}
+
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, APIResponse{
+			Success: false,
+			Message: "Method not allowed",
+		})
+		return
+	}
+
+	runningModelsMu.RLock()
+	defer runningModelsMu.RUnlock()
+
+	status := ModelStatus{
+		Loaded:     runningModel != nil,
+		ServerPort: config.BasePort,
+	}
+
+	if runningModel != nil {
+		status.Model = runningModel.entry
+		status.Port = runningModel.port
+	}
+
+	writeJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data:    status,
+	})
+}
+
+func handleLoad(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, APIResponse{
+			Success: false,
+			Message: "Method not allowed",
+		})
+		return
+	}
+
+	// 只支持 URL 参数 index
+	idxStr := r.URL.Query().Get("index")
+	if idxStr == "" {
+		writeJSON(w, http.StatusBadRequest, APIResponse{
+			Success: false,
+			Message: "Missing index parameter",
+		})
+		return
+	}
+
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 0 || idx >= len(currentModels) {
+		writeJSON(w, http.StatusBadRequest, APIResponse{
+			Success: false,
+			Message: "Invalid index",
+		})
+		return
+	}
+
+	// 检查是否已加载
+	runningModelsMu.RLock()
+	alreadyLoaded := runningModel != nil && runningModel.entry.Path == currentModels[idx].Path
+	runningModelsMu.RUnlock()
+
+	if alreadyLoaded {
+		writeJSON(w, http.StatusOK, APIResponse{
+			Success: true,
+			Message: "Model already loaded",
+			Data:    currentModels[idx],
+		})
+		return
+	}
+
+	loadModel(idx)
+
+	writeJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "Model loading started",
+		Data:    currentModels[idx],
+	})
+}
+
+func handleUnload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, APIResponse{
+			Success: false,
+			Message: "Method not allowed",
+		})
+		return
+	}
+
+	runningModelsMu.RLock()
+	isLoaded := runningModel != nil
+	runningModelsMu.RUnlock()
+
+	if !isLoaded {
+		writeJSON(w, http.StatusOK, APIResponse{
+			Success: true,
+			Message: "No model currently loaded",
+		})
+		return
+	}
+
+	unloadModel()
+
+	writeJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "Model unloaded",
+	})
+}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ok",
+	})
+}
+
+// ==================== 原有功能 ====================
+
 func getModelArgs(entry modelEntry) []string {
-	if args, exists := config.ModelSpecificArgs[entry.baseName]; exists && len(args) > 0 {
-		log.Printf("Using model-specific config for %s", entry.baseName)
+	if args, exists := config.ModelSpecificArgs[entry.BaseName]; exists && len(args) > 0 {
+		log.Printf("Using model-specific config for %s", entry.BaseName)
 		return args
 	}
-	log.Printf("Using default config for %s", entry.baseName)
+	log.Printf("Using default config for %s", entry.BaseName)
 	return config.DefaultArgs
 }
 
@@ -261,7 +464,7 @@ func onReady() {
 	buildMenuOnce()
 	refreshMenuState()
 
-	log.Printf("Started. Found %d models.", len(currentModels))
+	log.Printf("Started. Found %d models. API available at http://localhost:%d/api", len(currentModels), config.BasePort)
 }
 
 func buildMenuOnce() {
@@ -320,10 +523,10 @@ func refreshMenuState() {
 	for i, item := range menuItems.models {
 		if i < len(currentModels) {
 			m := currentModels[i]
-			title := filepath.Base(m.path)
+			title := filepath.Base(m.Path)
 
 			runningModelsMu.RLock()
-			isCurrent := hasRunningModel && runningModel.entry.path == m.path
+			isCurrent := hasRunningModel && runningModel.entry.Path == m.Path
 			runningModelsMu.RUnlock()
 
 			if isCurrent {
@@ -373,7 +576,7 @@ func loadModel(idx int) {
 
 	instance := &modelInstance{
 		entry: entry,
-		port:  config.BasePort,
+		port:  config.BasePort + 1, // llama-server 使用 basePort+1，API 使用 basePort
 	}
 
 	runningModel = instance
@@ -404,7 +607,7 @@ func stopModelInstance(instance *modelInstance) {
 		} else {
 			processState, _ := instance.cmd.Process.Wait()
 			log.Printf("Stopped model %s (port %d), PID: %d, Exit Code: %v",
-				filepath.Base(instance.entry.path), instance.port, pid, processState.ExitCode())
+				filepath.Base(instance.entry.Path), instance.port, pid, processState.ExitCode())
 		}
 		instance.cmd = nil
 	}
@@ -424,14 +627,14 @@ func stopAllModels() {
 
 func runLlamaServer(instance *modelInstance) {
 	args := []string{
-		"-m", instance.entry.path,
+		"-m", instance.entry.Path,
 		"--port", strconv.Itoa(instance.port),
 	}
 
 	modelArgs := getModelArgs(instance.entry)
 	args = append(args, modelArgs...)
 
-	log.Printf("Starting model %s on port %d", filepath.Base(instance.entry.path), instance.port)
+	log.Printf("Starting model %s on port %d", filepath.Base(instance.entry.Path), instance.port)
 
 	if config.AutoOpenWeb {
 		go func() {
@@ -484,6 +687,11 @@ func runLlamaServer(instance *modelInstance) {
 }
 
 func onExit() {
+	if apiServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		apiServer.Shutdown(ctx)
+	}
 	stopAllModels()
 }
 
@@ -510,22 +718,21 @@ func findGGUFFiles(dir string) ([]modelEntry, error) {
 		}
 
 		result = append(result, modelEntry{
-			path:     path,
-			baseName: strings.TrimSuffix(name, ".gguf"),
+			Path:     path,
+			BaseName: strings.TrimSuffix(name, ".gguf"),
 		})
 	}
 
-	// Sort by filename
 	for i := 0; i < len(result); i++ {
 		for j := i + 1; j < len(result); j++ {
-			if result[i].baseName > result[j].baseName {
+			if result[i].BaseName > result[j].BaseName {
 				result[i], result[j] = result[j], result[i]
 			}
 		}
 	}
 
 	for _, entry := range result {
-		log.Printf("Found model: %s", entry.baseName)
+		log.Printf("Found model: %s", entry.BaseName)
 	}
 
 	return result, nil
@@ -559,7 +766,7 @@ func waitForModelLoad(instance *modelInstance) {
 				}
 			}
 
-			log.Printf("Model %s finished loading on port %d", filepath.Base(instance.entry.path), instance.port)
+			log.Printf("Model %s finished loading on port %d", filepath.Base(instance.entry.Path), instance.port)
 			return
 
 		case <-timeout:
