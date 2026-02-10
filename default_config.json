@@ -2,6 +2,7 @@
   "modelDir": "./models",
   "autoOpenWebEnabled": true,
   "basePort": 8080,
+  "llamaServerPort": 8081,
   "defaultArgs": [
     "--host", "0.0.0.0",
     "--prio-batch",

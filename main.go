@@ -35,6 +35,7 @@ type Config struct {
 	ModelDir          string              `json:"modelDir"`
 	AutoOpenWeb       bool                `json:"autoOpenWebEnabled"`
 	BasePort          int                 `json:"basePort"`
+	LlamaServerPort   int                 `json:"llamaServerPort"`
 	DefaultArgs       []string            `json:"defaultArgs"`
 	ModelSpecificArgs map[string][]string `json:"modelSpecificArgs"`
 }
@@ -118,8 +119,21 @@ func loadConfig() error {
 			return fmt.Errorf("failed to parse embedded default config: %v", err)
 		}
 
+		// 设置默认端口值
+		if config.BasePort == 0 {
+			config.BasePort = 8080
+		}
+		if config.LlamaServerPort == 0 {
+			config.LlamaServerPort = 8081
+		}
+
 		if config.ModelSpecificArgs == nil {
 			config.ModelSpecificArgs = make(map[string][]string)
+		}
+
+		// 验证端口是否相同
+		if config.BasePort == config.LlamaServerPort {
+			return fmt.Errorf("API port (%d) and llama-server port (%d) cannot be the same", config.BasePort, config.LlamaServerPort)
 		}
 
 		if err := saveConfig(); err != nil {
@@ -139,11 +153,24 @@ func loadConfig() error {
 		return fmt.Errorf("failed to parse config file: %v", err)
 	}
 
+	// 设置默认端口值（向后兼容）
+	if config.BasePort == 0 {
+		config.BasePort = 8080
+	}
+	if config.LlamaServerPort == 0 {
+		config.LlamaServerPort = 8081
+	}
+
+	// 验证端口是否相同
+	if config.BasePort == config.LlamaServerPort {
+		return fmt.Errorf("API port (%d) and llama-server port (%d) cannot be the same", config.BasePort, config.LlamaServerPort)
+	}
+
 	if config.ModelSpecificArgs == nil {
 		config.ModelSpecificArgs = make(map[string][]string)
 	}
 
-	log.Printf("Config loaded: modelDir=%s, basePort=%d", config.ModelDir, config.BasePort)
+	log.Printf("Config loaded: modelDir=%s, basePort=%d, llamaServerPort=%d", config.ModelDir, config.BasePort, config.LlamaServerPort)
 	return nil
 }
 
@@ -324,12 +351,13 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	status := ModelStatus{
 		Loaded:     runningModel != nil,
-		ServerPort: config.BasePort,
+		ServerPort: config.BasePort, // API server port
+		Port:       0,               // Will be set if model is loaded
 	}
 
 	if runningModel != nil {
 		status.Model = runningModel.entry
-		status.Port = runningModel.port
+		status.Port = runningModel.port // llama-server port
 	}
 
 	writeJSON(w, http.StatusOK, APIResponse{
@@ -576,7 +604,7 @@ func loadModel(idx int) {
 
 	instance := &modelInstance{
 		entry: entry,
-		port:  config.BasePort + 1, // llama-server 使用 basePort+1，API 使用 basePort
+		port:  config.LlamaServerPort, // 使用配置文件中的llamaServerPort
 	}
 
 	runningModel = instance

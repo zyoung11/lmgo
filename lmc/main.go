@@ -18,7 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss/table"
 )
 
-const baseURL = "http://192.168.31.170:6969"
+const baseURL = "http://192.168.31.170:9696"
 
 var (
 	primaryColor   = lipgloss.Color("#7C3AED")
