@@ -387,7 +387,9 @@ func (m Model) View() string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(lipgloss.Color("#7C3AED"))
+		Background(lipgloss.Color("#7C3AED")).
+		Padding(0, 2).
+		MarginBottom(1)
 
 	sectionStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
