@@ -6,84 +6,24 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
-)
-
-const baseURL = "http://192.168.31.170:9696"
-
-var (
-	primaryColor   = lipgloss.Color("#7C3AED")
-	successColor   = lipgloss.Color("#10B981")
-	warningColor   = lipgloss.Color("#F59E0B")
-	errorColor     = lipgloss.Color("#EF4444")
-	textColor      = lipgloss.Color("#E5E7EB")
-	dimColor       = lipgloss.Color("#6B7280")
-	highlightColor = lipgloss.Color("#3B82F6")
-)
-
-var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(primaryColor).
-			Padding(0, 2).
-			MarginBottom(1)
-
-	statusStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(primaryColor).
-			Padding(1, 2).
-			Width(50)
-
-	modelListStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(dimColor).
-			Padding(1)
-
-	selectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(highlightColor).
-			Bold(true)
-
-	normalStyle = lipgloss.NewStyle().
-			Foreground(textColor)
-
-	healthGoodStyle = lipgloss.NewStyle().
-			Foreground(successColor).
-			Bold(true)
-
-	healthBadStyle = lipgloss.NewStyle().
-			Foreground(errorColor).
-			Bold(true)
-
-	loadingStyle = lipgloss.NewStyle().
-			Foreground(warningColor)
-
-	helpStyle = lipgloss.NewStyle().
-			Foreground(dimColor).
-			MarginTop(1)
-
-	successStyle   = lipgloss.NewStyle().Foreground(successColor)
-	highlightStyle = lipgloss.NewStyle().Foreground(highlightColor)
-	dimStyle       = lipgloss.NewStyle().Foreground(dimColor)
 )
 
 type ModelInfo struct {
-	Index    int    `json:"index"`
-	Name     string `json:"name"`
-	Filename string `json:"path"`
+	Index int    `json:"index"`
+	Name  string `json:"name"`
+	Path  string `json:"path"`
 }
 
-type ServerStatus struct {
+type ModelsResponse struct {
+	Success bool        `json:"success"`
+	Data    []ModelInfo `json:"data"`
+}
+
+type StatusData struct {
 	Loaded bool `json:"loaded"`
 	Model  struct {
 		BaseName string `json:"baseName"`
@@ -91,497 +31,518 @@ type ServerStatus struct {
 	} `json:"model"`
 }
 
+type StatusResponse struct {
+	Success bool       `json:"success"`
+	Data    StatusData `json:"data"`
+}
+
 type HealthStatus struct {
 	Status string `json:"status"`
 }
 
-type appState int
+type SimpleResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+type AppState int
 
 const (
-	stateIdle appState = iota
-	stateLoading
-	stateUnloading
+	StateLoading AppState = iota
+	StateReady
+	StateModelSelected
+	StateLoadingModel
+	StateUnloadingModel
+	StateSuccess
+	StateError
 )
 
-type mainModel struct {
-	state         appState
-	models        []ModelInfo
-	currentStatus ServerStatus
-	health        HealthStatus
-	selectedIndex int
-	cursor        int
-	err           error
-	spinner       spinner.Model
-	help          help.Model
-	keys          keyMap
-	lastUpdate    time.Time
-	loadingStart  time.Time
-	width         int
-	height        int
-	client        *http.Client
+type Model struct {
+	state   AppState
+	baseURL string
+
+	models      []ModelInfo
+	selectedIdx int
+
+	health      string
+	loadedModel string
+	lastStatus  time.Time
+	statusError bool
+
 	message       string
-	messageType   string
-}
+	messageTime   time.Time
+	operationTime time.Duration
 
-type keyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Load   key.Binding
-	Unload key.Binding
-	Quit   key.Binding
-}
-
-func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Load, k.Unload, k.Quit}
-}
-
-func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Up, k.Down},
-		{k.Load, k.Unload},
-		{k.Quit},
-	}
-}
-
-func newKeyMap() keyMap {
-	return keyMap{
-		Up: key.NewBinding(
-			key.WithKeys("up", "k"),
-			key.WithHelp("↑/k", "Move up"),
-		),
-		Down: key.NewBinding(
-			key.WithKeys("down", "j"),
-			key.WithHelp("↓/j", "Move down"),
-		),
-		Load: key.NewBinding(
-			key.WithKeys("enter", "l"),
-			key.WithHelp("enter/l", "Load selected model"),
-		),
-		Unload: key.NewBinding(
-			key.WithKeys("u", "backspace"),
-			key.WithHelp("u/⌫", "Unload model"),
-		),
-		Quit: key.NewBinding(
-			key.WithKeys("q", "ctrl+c"),
-			key.WithHelp("q/ctrl+c", "Exit"),
-		),
-	}
+	loadingDots  int
+	windowWidth  int
+	windowHeight int
+	showHelp     bool
 }
 
 type tickMsg time.Time
-type modelsMsg []ModelInfo
-type statusMsg ServerStatus
+type modelsMsg ModelsResponse
+type statusMsg StatusResponse
 type healthMsg HealthStatus
-type errMsg error
-type operationDoneMsg struct {
-	success bool
+type loadMsg SimpleResponse
+type unloadMsg SimpleResponse
+type errorMsg string
+type successMsg struct {
 	message string
+	time    time.Duration
 }
 
-func initialModel() mainModel {
-	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = loadingStyle
+func fetchModels(baseURL string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := http.Get(baseURL + "/api/models")
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to fetch models: %v", err))
+		}
+		defer resp.Body.Close()
 
-	return mainModel{
-		state:         stateIdle,
-		spinner:       s,
-		help:          help.New(),
-		keys:          newKeyMap(),
-		client:        &http.Client{Timeout: 10 * time.Second},
-		health:        HealthStatus{Status: "checking"},
-		selectedIndex: -1,
-		cursor:        0,
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to read response: %v", err))
+		}
+
+		var data ModelsResponse
+		if err := json.Unmarshal(body, &data); err != nil {
+			return errorMsg(fmt.Sprintf("Failed to parse models list: %v", err))
+		}
+
+		return modelsMsg(data)
 	}
 }
 
-func (m mainModel) Init() tea.Cmd {
+func fetchStatus(baseURL string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := http.Get(baseURL + "/api/status")
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to fetch status: %v", err))
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to read status: %v", err))
+		}
+
+		var data StatusResponse
+		if err := json.Unmarshal(body, &data); err != nil {
+			return errorMsg(fmt.Sprintf("Failed to parse status: %v", err))
+		}
+
+		return statusMsg(data)
+	}
+}
+
+func fetchHealth(baseURL string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := http.Get(baseURL + "/api/health")
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Health check failed: %v", err))
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to read health status: %v", err))
+		}
+
+		var data HealthStatus
+		if err := json.Unmarshal(body, &data); err != nil {
+			return errorMsg(fmt.Sprintf("Failed to parse health status: %v", err))
+		}
+
+		return healthMsg(data)
+	}
+}
+
+func loadModel(baseURL string, index int) tea.Cmd {
+	return func() tea.Msg {
+		start := time.Now()
+		url := fmt.Sprintf("%s/api/load?index=%d", baseURL, index)
+		resp, err := http.Post(url, "application/json", nil)
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to load model: %v", err))
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to read response: %v", err))
+		}
+
+		var data SimpleResponse
+		if err := json.Unmarshal(body, &data); err != nil {
+			return errorMsg(fmt.Sprintf("Failed to parse response: %v", err))
+		}
+
+		if !data.Success {
+			return errorMsg(fmt.Sprintf("Load failed: %s", data.Message))
+		}
+
+		elapsed := time.Since(start)
+		return successMsg{message: data.Message, time: elapsed}
+	}
+}
+
+func unloadModel(baseURL string) tea.Cmd {
+	return func() tea.Msg {
+		start := time.Now()
+		url := baseURL + "/api/unload"
+		resp, err := http.Post(url, "application/json", nil)
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to unload model: %v", err))
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Failed to read response: %v", err))
+		}
+
+		var data SimpleResponse
+		if err := json.Unmarshal(body, &data); err != nil {
+			return errorMsg(fmt.Sprintf("Failed to parse response: %v", err))
+		}
+
+		if !data.Success {
+			return errorMsg(fmt.Sprintf("Unload failed: %s", data.Message))
+		}
+
+		elapsed := time.Since(start)
+		return successMsg{message: data.Message, time: elapsed}
+	}
+}
+
+func NewModel() Model {
+	return Model{
+		baseURL:     "http://192.168.31.170:9696",
+		state:       StateLoading,
+		selectedIdx: 0,
+		health:      "Checking...",
+		loadedModel: "None",
+		showHelp:    true,
+		loadingDots: 0,
+	}
+}
+
+func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		m.spinner.Tick,
-		m.fetchModels(),
-		m.fetchStatus(),
-		m.fetchHealth(),
+		fetchModels(m.baseURL),
+		fetchStatus(m.baseURL),
+		fetchHealth(m.baseURL),
 		tickCmd(),
 	)
 }
 
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return handleKeyMsg(m, msg)
+
+	case tea.WindowSizeMsg:
+		m.windowWidth = msg.Width
+		m.windowHeight = msg.Height
+		return m, nil
+
+	case tickMsg:
+		m.loadingDots = (m.loadingDots + 1) % 4
+
+		if time.Since(m.lastStatus) > 2*time.Second {
+			m.lastStatus = time.Now()
+			cmds = append(cmds, fetchStatus(m.baseURL), fetchHealth(m.baseURL))
+		}
+
+		if m.state == StateSuccess || m.state == StateError {
+			if time.Since(m.messageTime) > 3*time.Second {
+				m.state = StateReady
+			}
+		}
+		return m, tea.Batch(append(cmds, tickCmd())...)
+
+	case modelsMsg:
+		m.models = msg.Data
+		if len(m.models) > 0 {
+			m.state = StateReady
+		}
+		return m, nil
+
+	case statusMsg:
+		if msg.Success {
+			m.statusError = false
+			if msg.Data.Loaded {
+				m.loadedModel = msg.Data.Model.BaseName
+			} else {
+				m.loadedModel = "None"
+			}
+		}
+		return m, nil
+
+	case healthMsg:
+		m.health = msg.Status
+		return m, nil
+
+	case loadMsg:
+		if msg.Success {
+			m.state = StateSuccess
+			m.message = fmt.Sprintf("✓ Load successful: %s", msg.Message)
+		} else {
+			m.state = StateError
+			m.message = fmt.Sprintf("✗ Load failed: %s", msg.Message)
+		}
+		m.messageTime = time.Now()
+		return m, fetchStatus(m.baseURL)
+
+	case unloadMsg:
+		if msg.Success {
+			m.state = StateSuccess
+			m.message = fmt.Sprintf("✓ Unload successful: %s", msg.Message)
+		} else {
+			m.state = StateError
+			m.message = fmt.Sprintf("✗ Unload failed: %s", msg.Message)
+		}
+		m.messageTime = time.Now()
+		return m, fetchStatus(m.baseURL)
+
+	case successMsg:
+		m.state = StateSuccess
+		m.message = fmt.Sprintf("✓ %s (took: %v)", msg.message, msg.time)
+		m.operationTime = msg.time
+		m.messageTime = time.Now()
+		return m, fetchStatus(m.baseURL)
+
+	case errorMsg:
+		m.state = StateError
+		m.message = fmt.Sprintf("✗ %s", string(msg))
+		m.messageTime = time.Now()
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func handleKeyMsg(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+
+	case "h":
+		m.showHelp = !m.showHelp
+		return m, nil
+
+	case "up", "k":
+		if m.state == StateReady || m.state == StateModelSelected {
+			m.selectedIdx = max(0, m.selectedIdx-1)
+			if m.state == StateReady {
+				m.state = StateModelSelected
+			}
+		}
+		return m, nil
+
+	case "down", "j":
+		if m.state == StateReady || m.state == StateModelSelected {
+			m.selectedIdx = min(len(m.models)-1, m.selectedIdx+1)
+			if m.state == StateReady {
+				m.state = StateModelSelected
+			}
+		}
+		return m, nil
+
+	case "enter":
+		if m.state == StateReady || m.state == StateModelSelected {
+			if m.selectedIdx >= 0 && m.selectedIdx < len(m.models) {
+				m.state = StateLoadingModel
+				return m, loadModel(m.baseURL, m.selectedIdx)
+			}
+		}
+		return m, nil
+
+	case "u":
+		if m.state == StateReady || m.state == StateModelSelected {
+			m.state = StateUnloadingModel
+			return m, unloadModel(m.baseURL)
+		}
+		return m, nil
+
+	case "r":
+		m.state = StateLoading
+		return m, tea.Batch(
+			fetchModels(m.baseURL),
+			fetchStatus(m.baseURL),
+			fetchHealth(m.baseURL),
+		)
+	}
+
+	return m, nil
+}
+
+func (m Model) View() string {
+	if m.windowWidth == 0 || m.windowHeight == 0 {
+		return "Initializing..."
+	}
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#7C3AED"))
+
+	sectionStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1).
+		Margin(0, 1, 1, 0)
+
+	statusGood := lipgloss.NewStyle().Foreground(lipgloss.Color("46")).Bold(true)
+	statusBad := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	statusNeutral := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+
+	selectedStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("63")).
+		Foreground(lipgloss.Color("255")).
+		Bold(true).
+		Padding(0, 1)
+
+	modelItemStyle := lipgloss.NewStyle().
+		Padding(0, 1).
+		Margin(0, 0, 0, 0)
+
+	messageSuccess := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("46")).
+		Bold(true)
+
+	messageError := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("196")).
+		Bold(true)
+
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Italic(true)
+
+	title := titleStyle.Render("lmgo Control")
+
+	var modelList string
+	if m.state == StateLoading && len(m.models) == 0 {
+		loadingText := "Loading models list"
+		dots := ""
+		for i := 0; i < m.loadingDots; i++ {
+			dots += "."
+		}
+		modelList = fmt.Sprintf("%s%s", loadingText, dots)
+	} else if len(m.models) == 0 {
+		modelList = "No available models found"
+	} else {
+		for i, model := range m.models {
+			item := fmt.Sprintf("%d. %s", i+1, model.Name)
+			if i == m.selectedIdx {
+				item = selectedStyle.Render(fmt.Sprintf("➤ %s", item))
+			} else {
+				item = modelItemStyle.Render(fmt.Sprintf("  %s", item))
+			}
+			modelList += item + "\n"
+		}
+	}
+
+	modelPanel := sectionStyle.Width(m.windowWidth/2 - 4).
+		Height(m.windowHeight/2 - 2).
+		Render(fmt.Sprintf("Available Models (%d)\n\n%s", len(m.models), modelList))
+
+	healthStatus := statusNeutral.Render(m.health)
+	if m.health == "ok" {
+		healthStatus = statusGood.Render("✓ Healthy")
+	} else if m.statusError {
+		healthStatus = statusBad.Render("✗ Error")
+	}
+
+	modelStatus := statusNeutral.Render(m.loadedModel)
+	if m.loadedModel != "无" && m.loadedModel != "" {
+		modelStatus = statusGood.Render("✓ " + m.loadedModel)
+	}
+
+	statusPanel := sectionStyle.Width(m.windowWidth/2 - 4).
+		Height(m.windowHeight/2 - 2).
+		Render(fmt.Sprintf(
+			"Health Status: %s\n\n"+
+				"Current Model: %s\n\n"+
+				"Last Updated: %s",
+			healthStatus,
+			modelStatus,
+			m.lastStatus.Format("15:04:05")))
+
+	var actionPanel string
+	switch m.state {
+	case StateLoading:
+		actionPanel = "Initializing..."
+	case StateLoadingModel:
+		loadingText := "Loading model"
+		dots := ""
+		for i := 0; i < m.loadingDots; i++ {
+			dots += "."
+		}
+		actionPanel = fmt.Sprintf("%s%s", loadingText, dots)
+	case StateUnloadingModel:
+		loadingText := "Unloading model"
+		dots := ""
+		for i := 0; i < m.loadingDots; i++ {
+			dots += "."
+		}
+		actionPanel = fmt.Sprintf("%s%s", loadingText, dots)
+	case StateSuccess:
+		actionPanel = messageSuccess.Render(m.message)
+	case StateError:
+		actionPanel = messageError.Render(m.message)
+	default:
+		if len(m.models) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.models) {
+			selectedModel := m.models[m.selectedIdx]
+			actionPanel = fmt.Sprintf("Selected: %s", selectedModel.Name)
+		} else {
+			actionPanel = "Use ↑↓ to select model | Enter to load | U to unload | R to refresh | Q to exit"
+		}
+	}
+
+	actionPanel = sectionStyle.Width(m.windowWidth - 4).
+		Height(1).
+		Render(actionPanel)
+
+	var helpPanel string
+	if m.showHelp {
+		helpText := "↑↓/kj: Select | Enter: Load selected model | U: Unload current model | R: Refresh data | Q/Ctrl+C: Exit"
+		helpPanel = helpStyle.Render(helpText)
+	}
+
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, modelPanel, statusPanel)
+
+	fullScreen := lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		topRow,
+		actionPanel,
+		helpPanel,
+	)
+
+	return lipgloss.Place(m.windowWidth, m.windowHeight,
+		lipgloss.Center, lipgloss.Center,
+		fullScreen,
+		lipgloss.WithWhitespaceChars(""),
+		lipgloss.WithWhitespaceForeground(lipgloss.Color("238")),
+	)
+}
+
 func tickCmd() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
 
-func (m mainModel) fetchModels() tea.Cmd {
-	return func() tea.Msg {
-		resp, err := m.client.Get(baseURL + "/api/models")
-		if err != nil {
-			return errMsg(err)
-		}
-		defer resp.Body.Close()
-
-		var r struct {
-			Success bool            `json:"success"`
-			Data    json.RawMessage `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-			return errMsg(err)
-		}
-
-		var models []ModelInfo
-		if err := json.Unmarshal(r.Data, &models); err != nil {
-			return errMsg(err)
-		}
-
-		return modelsMsg(models)
-	}
-}
-
-func (m mainModel) fetchStatus() tea.Cmd {
-	return func() tea.Msg {
-		resp, err := m.client.Get(baseURL + "/api/status")
-		if err != nil {
-			return errMsg(err)
-		}
-		defer resp.Body.Close()
-
-		var r struct {
-			Success bool            `json:"success"`
-			Data    json.RawMessage `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-			return errMsg(err)
-		}
-
-		var status ServerStatus
-		if err := json.Unmarshal(r.Data, &status); err != nil {
-			return errMsg(err)
-		}
-
-		return statusMsg(status)
-	}
-}
-
-func (m mainModel) fetchHealth() tea.Cmd {
-	return func() tea.Msg {
-		resp, err := m.client.Get(baseURL + "/api/health")
-		if err != nil {
-			return healthMsg{Status: "error"}
-		}
-		defer resp.Body.Close()
-
-		var h HealthStatus
-		if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
-			return healthMsg{Status: "error"}
-		}
-
-		return healthMsg(h)
-	}
-}
-
-func (m mainModel) loadModel(index int) tea.Cmd {
-	return func() tea.Msg {
-		url := fmt.Sprintf("%s/api/load?index=%d", baseURL, index)
-		req, _ := http.NewRequest("POST", url, strings.NewReader(""))
-
-		resp, err := m.client.Do(req)
-		if err != nil {
-			return operationDoneMsg{success: false, message: "Load failed: " + err.Error()}
-		}
-		defer resp.Body.Close()
-
-		body, _ := io.ReadAll(resp.Body)
-		var r struct {
-			Success bool   `json:"success"`
-			Message string `json:"message"`
-		}
-		json.Unmarshal(body, &r)
-
-		if r.Success {
-			return operationDoneMsg{success: true, message: "Loading model..."}
-		}
-		return operationDoneMsg{success: false, message: r.Message}
-	}
-}
-
-func (m mainModel) unloadModel() tea.Cmd {
-	return func() tea.Msg {
-		req, _ := http.NewRequest("POST", baseURL+"/api/unload", strings.NewReader(""))
-
-		resp, err := m.client.Do(req)
-		if err != nil {
-			return operationDoneMsg{success: false, message: "Unload failed: " + err.Error()}
-		}
-		defer resp.Body.Close()
-
-		body, _ := io.ReadAll(resp.Body)
-		var r struct {
-			Success bool   `json:"success"`
-			Message string `json:"message"`
-		}
-		json.Unmarshal(body, &r)
-
-		if r.Success {
-			return operationDoneMsg{success: true, message: "Model unloaded"}
-		}
-		return operationDoneMsg{success: false, message: r.Message}
-	}
-}
-
-func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.help.Width = msg.Width
-
-	case tea.KeyMsg:
-		if m.state != stateIdle {
-			switch {
-			case key.Matches(msg, m.keys.Quit):
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-
-		switch {
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
-
-		case key.Matches(msg, m.keys.Up):
-			if m.cursor > 0 {
-				m.cursor--
-			}
-
-		case key.Matches(msg, m.keys.Down):
-			if m.cursor < len(m.models)-1 {
-				m.cursor++
-			}
-
-		case key.Matches(msg, m.keys.Load):
-			if len(m.models) > 0 && !m.currentStatus.Loaded {
-				m.state = stateLoading
-				m.loadingStart = time.Now()
-				m.message = "Loading model..."
-				m.messageType = "info"
-				return m, tea.Batch(
-					m.loadModel(m.models[m.cursor].Index),
-					m.spinner.Tick,
-				)
-			} else if m.currentStatus.Loaded {
-				m.message = "Please unload current model first"
-				m.messageType = "error"
-			}
-
-		case key.Matches(msg, m.keys.Unload):
-			if m.currentStatus.Loaded {
-				m.state = stateUnloading
-				m.message = "Unloading..."
-				m.messageType = "info"
-				return m, tea.Batch(
-					m.unloadModel(),
-					m.spinner.Tick,
-				)
-			} else {
-				m.message = "No loaded model"
-				m.messageType = "error"
-			}
-		}
-
-	case tickMsg:
-		m.lastUpdate = time.Time(msg)
-		return m, tea.Batch(
-			tickCmd(),
-			m.fetchStatus(),
-			m.fetchHealth(),
-		)
-
-	case modelsMsg:
-		m.models = msg
-		if len(m.models) > 0 && m.cursor >= len(m.models) {
-			m.cursor = len(m.models) - 1
-		}
-
-	case statusMsg:
-		prevLoaded := m.currentStatus.Loaded
-		m.currentStatus = ServerStatus(msg)
-
-		if m.state == stateLoading && m.currentStatus.Loaded {
-			m.state = stateIdle
-			m.message = fmt.Sprintf("✓ Model [%s] loaded successfully", m.currentStatus.Model.BaseName)
-			m.messageType = "success"
-		} else if m.state == stateUnloading && !m.currentStatus.Loaded && prevLoaded {
-			m.state = stateIdle
-			m.message = "✓ Model unloaded"
-			m.messageType = "success"
-		}
-
-	case healthMsg:
-		m.health = HealthStatus(msg)
-
-	case operationDoneMsg:
-		if !msg.success {
-			m.state = stateIdle
-			m.message = "✗ " + msg.message
-			m.messageType = "error"
-		}
-
-	case errMsg:
-		m.err = msg
-		m.message = "✗ " + msg.Error()
-		m.messageType = "error"
-
-	default:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		cmds = append(cmds, cmd)
-	}
-
-	return m, tea.Batch(cmds...)
-}
-
-func (m mainModel) View() string {
-	if m.width == 0 {
-		return "Initializing..."
-	}
-
-	var b strings.Builder
-
-	b.WriteString("\n")
-	title := titleStyle.Render("lmgo Control")
-	b.WriteString(title)
-	b.WriteString("\n\n")
-
-	b.WriteString(m.renderStatusPanel())
-	b.WriteString("\n\n")
-
-	b.WriteString(m.renderModelList())
-	b.WriteString("\n\n")
-
-	if m.message != "" {
-		b.WriteString(m.renderMessage())
-		b.WriteString("\n\n")
-	}
-
-	b.WriteString(helpStyle.Render(m.help.View(m.keys)))
-
-	b.WriteString("\n")
-
-	return b.String()
-}
-
-func (m mainModel) renderStatusPanel() string {
-
-	healthStr := "● Service Status: "
-	if m.health.Status == "ok" {
-		healthStr += healthGoodStyle.Render("Healthy")
-	} else {
-		healthStr += healthBadStyle.Render("Unhealthy")
-	}
-
-	modelStr := "● Model Status: "
-	if m.currentStatus.Loaded {
-		modelStr += successStyle.Render("Loaded")
-		modelStr += fmt.Sprintf(" [%s]", highlightStyle.Render(m.currentStatus.Model.BaseName))
-	} else {
-		modelStr += dimStyle.Render("Not Loaded")
-	}
-
-	opStr := ""
-	switch m.state {
-	case stateLoading:
-		opStr = fmt.Sprintf("\n%s Loading model %s",
-			m.spinner.View(),
-			loadingStyle.Render(fmt.Sprintf("(%ds)", int(time.Since(m.loadingStart).Seconds()))))
-	case stateUnloading:
-		opStr = fmt.Sprintf("\n%s Unloading model...", m.spinner.View())
-	}
-
-	content := fmt.Sprintf("%s\n%s%s", healthStr, modelStr, opStr)
-
-	return statusStyle.Render(content)
-}
-
-func (m mainModel) renderModelList() string {
-	if len(m.models) == 0 {
-		return modelListStyle.Render(dimStyle.Render("  No models available  "))
-	}
-
-	rows := [][]string{}
-
-	for i, model := range m.models {
-		cursor := "  "
-		style := normalStyle
-
-		if i == m.cursor {
-			cursor = "▸ "
-			style = selectedStyle
-		}
-
-		name := model.Name
-		if m.currentStatus.Loaded && m.currentStatus.Model.BaseName == model.Name {
-			name = successStyle.Render("✓ " + model.Name)
-		} else if i == m.cursor {
-			name = style.Render(model.Name)
-		}
-
-		rows = append(rows, []string{
-			style.Render(cursor + strconv.Itoa(model.Index)),
-			name,
-			dimStyle.Render(truncateString(model.Filename, 30)),
-		})
-	}
-
-	t := table.New().
-		Border(lipgloss.NormalBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(dimColor)).
-		Headers(
-			lipgloss.NewStyle().Bold(true).Render("ID"),
-			lipgloss.NewStyle().Bold(true).Render("Model Name"),
-			lipgloss.NewStyle().Bold(true).Render("Filename"),
-		).
-		Rows(rows...).
-		Width(70)
-
-	return modelListStyle.Render(t.Render())
-}
-
-func (m mainModel) renderMessage() string {
-	switch m.messageType {
-	case "success":
-		return lipgloss.NewStyle().
-			Foreground(successColor).
-			Bold(true).
-			Render(m.message)
-	case "error":
-		return lipgloss.NewStyle().
-			Foreground(errorColor).
-			Bold(true).
-			Render(m.message)
-	default:
-		return lipgloss.NewStyle().
-			Foreground(warningColor).
-			Render(m.message)
-	}
-}
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
-
 func main() {
 	p := tea.NewProgram(
-		initialModel(),
+		NewModel(),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 
 	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error: %v", err)
+		fmt.Printf("Program error: %v\n", err)
 		os.Exit(1)
 	}
 }
