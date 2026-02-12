@@ -436,10 +436,14 @@ func (m Model) View() string {
 	} else if len(m.models) == 0 {
 		modelList = "No available models found"
 	} else {
+		maxModelNameWidth := max(10, (m.windowWidth/2 - 12))
+
 		for i, model := range m.models {
-			item := fmt.Sprintf("%d. %s", i+1, model.Name)
+			displayName := truncateString(model.Name, maxModelNameWidth-4)
+			item := fmt.Sprintf("%d. %s", i+1, displayName)
+
 			if i == m.selectedIdx {
-				item = selectedStyle.Render(fmt.Sprintf("➤ %s", item))
+				item = selectedStyle.Render(fmt.Sprintf("➤  %s", item))
 			} else {
 				item = modelItemStyle.Render(fmt.Sprintf("  %s", item))
 			}
@@ -459,8 +463,10 @@ func (m Model) View() string {
 	}
 
 	modelStatus := statusNeutral.Render(m.loadedModel)
-	if m.loadedModel != "无" && m.loadedModel != "" {
-		modelStatus = statusGood.Render("✓ " + m.loadedModel)
+	if m.loadedModel != "None" && m.loadedModel != "" {
+		maxModelStatusWidth := max(10, (m.windowWidth/2 - 20))
+		displayName := truncateString(m.loadedModel, maxModelStatusWidth-4)
+		modelStatus = statusGood.Render("✓ " + displayName)
 	}
 
 	statusPanel := sectionStyle.Width(m.windowWidth/2 - 4).
@@ -498,7 +504,9 @@ func (m Model) View() string {
 	default:
 		if len(m.models) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.models) {
 			selectedModel := m.models[m.selectedIdx]
-			actionPanel = fmt.Sprintf("Selected: %s", selectedModel.Name)
+			maxActionWidth := m.windowWidth - 10
+			displayName := truncateString(selectedModel.Name, maxActionWidth-10)
+			actionPanel = fmt.Sprintf("Selected: %s", displayName)
 		} else {
 			actionPanel = "Use ↑↓ to select model | Enter to load | U to unload | R to refresh | Q to exit"
 		}
@@ -510,7 +518,7 @@ func (m Model) View() string {
 
 	var helpPanel string
 	if m.showHelp {
-		helpText := "↑↓/kj: Select | Enter: Load selected model | U: Unload current model | R: Refresh data | Q/Ctrl+C: Exit"
+		helpText := "↑↓/kj: Select | Enter: Load selected model | U: Unload current model \n R: Refresh data | Q/Ctrl+C: Exit"
 		helpPanel = helpStyle.Render(helpText)
 	}
 
@@ -529,6 +537,21 @@ func (m Model) View() string {
 		lipgloss.WithWhitespaceChars(""),
 		lipgloss.WithWhitespaceForeground(lipgloss.Color("238")),
 	)
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+
+	if maxLen <= 3 {
+		if maxLen <= 0 {
+			return ""
+		}
+		return s[:maxLen]
+	}
+
+	return s[:maxLen-3] + "..."
 }
 
 func tickCmd() tea.Cmd {
