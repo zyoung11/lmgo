@@ -119,7 +119,6 @@ func loadConfig() error {
 			return fmt.Errorf("failed to parse embedded default config: %v", err)
 		}
 
-		// 设置默认端口值
 		if config.BasePort == 0 {
 			config.BasePort = 8080
 		}
@@ -131,7 +130,6 @@ func loadConfig() error {
 			config.ModelSpecificArgs = make(map[string][]string)
 		}
 
-		// 验证端口是否相同
 		if config.BasePort == config.LlamaServerPort {
 			return fmt.Errorf("API port (%d) and llama-server port (%d) cannot be the same", config.BasePort, config.LlamaServerPort)
 		}
@@ -153,7 +151,6 @@ func loadConfig() error {
 		return fmt.Errorf("failed to parse config file: %v", err)
 	}
 
-	// 设置默认端口值（向后兼容）
 	if config.BasePort == 0 {
 		config.BasePort = 8080
 	}
@@ -161,7 +158,6 @@ func loadConfig() error {
 		config.LlamaServerPort = 8081
 	}
 
-	// 验证端口是否相同
 	if config.BasePort == config.LlamaServerPort {
 		return fmt.Errorf("API port (%d) and llama-server port (%d) cannot be the same", config.BasePort, config.LlamaServerPort)
 	}
@@ -267,8 +263,6 @@ func extractZip(data []byte, dest string) error {
 	return nil
 }
 
-// ==================== RESTful API ====================
-
 func startAPIServer() {
 	mux := http.NewServeMux()
 
@@ -351,13 +345,13 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	status := ModelStatus{
 		Loaded:     runningModel != nil,
-		ServerPort: config.BasePort, // API server port
-		Port:       0,               // Will be set if model is loaded
+		ServerPort: config.BasePort,
+		Port:       0,
 	}
 
 	if runningModel != nil {
 		status.Model = runningModel.entry
-		status.Port = runningModel.port // llama-server port
+		status.Port = runningModel.port
 	}
 
 	writeJSON(w, http.StatusOK, APIResponse{
@@ -375,7 +369,6 @@ func handleLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 只支持 URL 参数 index
 	idxStr := r.URL.Query().Get("index")
 	if idxStr == "" {
 		writeJSON(w, http.StatusBadRequest, APIResponse{
@@ -394,7 +387,6 @@ func handleLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 检查是否已加载
 	runningModelsMu.RLock()
 	alreadyLoaded := runningModel != nil && runningModel.entry.Path == currentModels[idx].Path
 	runningModelsMu.RUnlock()
@@ -451,8 +443,6 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status": "ok",
 	})
 }
-
-// ==================== 原有功能 ====================
 
 func getModelArgs(entry modelEntry) []string {
 	if args, exists := config.ModelSpecificArgs[entry.BaseName]; exists && len(args) > 0 {
@@ -604,7 +594,7 @@ func loadModel(idx int) {
 
 	instance := &modelInstance{
 		entry: entry,
-		port:  config.LlamaServerPort, // 使用配置文件中的llamaServerPort
+		port:  config.LlamaServerPort,
 	}
 
 	runningModel = instance
