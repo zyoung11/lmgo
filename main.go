@@ -482,6 +482,14 @@ func onReady() {
 	buildMenuOnce()
 	refreshMenuState()
 
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			refreshModels()
+		}
+	}()
+
 	log.Printf("Started. Found %d models. API available at http://localhost:%d/api", len(currentModels), config.BasePort)
 }
 
@@ -560,6 +568,22 @@ func refreshMenuState() {
 			item.Hide()
 		}
 	}
+}
+
+func refreshModels() {
+	var err error
+	currentModels, err = findGGUFFiles(config.ModelDir)
+	if err != nil {
+		log.Printf("Error scanning model files: %v", err)
+		return
+	}
+
+	if len(currentModels) == 0 {
+		log.Printf("No .gguf files found in directory: %s", config.ModelDir)
+		return
+	}
+
+	refreshMenuState()
 }
 
 func openCurrentModelWebInterface() {
