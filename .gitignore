@@ -31,7 +31,6 @@ go.work.sum
 # .idea/
 # .vscode/
 lmgo.json
-llama-*-windows-rocm-gfx1151-x64.zip
-llama-b1177-bin-win-rocm-gfx1151-x64.zip
 server
 lmc
+*.zip
