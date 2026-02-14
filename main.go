@@ -581,6 +581,10 @@ func loadModel(idx int) {
 		return
 	}
 
+	if err := loadConfig(); err != nil {
+		log.Printf("Warning: Failed to reload config: %v", err)
+	}
+
 	entry := currentModels[idx]
 
 	runningModelsMu.Lock()
@@ -605,6 +609,10 @@ func loadModel(idx int) {
 }
 
 func unloadModel() {
+	if err := loadConfig(); err != nil {
+		log.Printf("Warning: Failed to reload config: %v", err)
+	}
+
 	runningModelsMu.Lock()
 
 	if runningModel != nil {
