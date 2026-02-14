@@ -58,25 +58,26 @@ const (
 )
 
 type Model struct {
-	state   AppState
-	baseURL string
+	state          AppState
+	baseURL        string
 
-	models      []ModelInfo
-	selectedIdx int
+	models         []ModelInfo
+	selectedIdx    int
 
-	health      string
-	loadedModel string
-	lastStatus  time.Time
-	statusError bool
+	health         string
+	loadedModel    string
+	loadedModelName string
+	lastStatus     time.Time
+	statusError    bool
 
-	message       string
-	messageTime   time.Time
-	operationTime time.Duration
+	message        string
+	messageTime    time.Time
+	operationTime  time.Duration
 
-	loadingDots  int
-	windowWidth  int
-	windowHeight int
-	showHelp     bool
+	loadingDots   int
+	windowWidth    int
+	windowHeight   int
+	showHelp       bool
 }
 
 type tickMsg time.Time
@@ -275,8 +276,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusError = false
 			if msg.Data.Loaded {
 				m.loadedModel = msg.Data.Model.BaseName
+				m.loadedModelName = msg.Data.Model.BaseName
 			} else {
 				m.loadedModel = "None"
+				m.loadedModelName = ""
 			}
 		}
 		return m, nil
@@ -407,6 +410,12 @@ func (m Model) View() string {
 		Bold(true).
 		Padding(0, 1)
 
+	loadedStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#F48FB1")).
+		Foreground(lipgloss.Color("255")).
+		Bold(true).
+		Padding(0, 1)
+
 	modelItemStyle := lipgloss.NewStyle().
 		Padding(0, 1).
 		Margin(0, 0, 0, 0)
@@ -444,6 +453,8 @@ func (m Model) View() string {
 
 			if i == m.selectedIdx {
 				item = selectedStyle.Render(fmt.Sprintf("➤  %s", item))
+			} else if model.Name == m.loadedModelName {
+				item = loadedStyle.Render(fmt.Sprintf("  %s", item))
 			} else {
 				item = modelItemStyle.Render(fmt.Sprintf("  %s", item))
 			}
