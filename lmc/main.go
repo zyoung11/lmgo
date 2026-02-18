@@ -58,39 +58,41 @@ const (
 )
 
 type Model struct {
-	state          AppState
-	baseURL        string
+	state   AppState
+	baseURL string
 
-	models         []ModelInfo
-	selectedIdx    int
+	models      []ModelInfo
+	selectedIdx int
 
-	health         string
-	loadedModel    string
+	health          string
+	loadedModel     string
 	loadedModelName string
-	lastStatus     time.Time
-	statusError    bool
+	lastStatus      time.Time
+	statusError     bool
 
-	message        string
-	messageTime    time.Time
-	operationTime  time.Duration
+	message       string
+	messageTime   time.Time
+	operationTime time.Duration
 
-	loadingDots   int
-	windowWidth    int
-	windowHeight   int
-	showHelp       bool
+	loadingDots  int
+	windowWidth  int
+	windowHeight int
+	showHelp     bool
 }
 
-type tickMsg time.Time
-type modelsMsg ModelsResponse
-type statusMsg StatusResponse
-type healthMsg HealthStatus
-type loadMsg SimpleResponse
-type unloadMsg SimpleResponse
-type errorMsg string
-type successMsg struct {
-	message string
-	time    time.Duration
-}
+type (
+	tickMsg    time.Time
+	modelsMsg  ModelsResponse
+	statusMsg  StatusResponse
+	healthMsg  HealthStatus
+	loadMsg    SimpleResponse
+	unloadMsg  SimpleResponse
+	errorMsg   string
+	successMsg struct {
+		message string
+		time    time.Duration
+	}
+)
 
 func fetchModels(baseURL string) tea.Cmd {
 	return func() tea.Msg {
@@ -218,7 +220,7 @@ func unloadModel(baseURL string) tea.Cmd {
 
 func NewModel() Model {
 	return Model{
-		baseURL:     "http://192.168.31.170:9696",
+		baseURL:     "http://192.168.100.10:9696",
 		state:       StateLoading,
 		selectedIdx: 0,
 		health:      "Checking...",
