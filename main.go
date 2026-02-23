@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/getlantern/systray"
+	"golang.org/x/sys/windows/registry"
 )
 
 //go:embed favicon.ico
@@ -34,6 +35,7 @@ var defaultConfigData []byte
 type Config struct {
 	ModelDir          string              `json:"modelDir"`
 	AutoOpenWeb       bool                `json:"autoOpenWebEnabled"`
+	AutoStartEnabled  bool                `json:"autoStartEnabled"`
 	BasePort          int                 `json:"basePort"`
 	LlamaServerPort   int                 `json:"llamaServerPort"`
 	DefaultArgs       []string            `json:"defaultArgs"`
@@ -55,6 +57,7 @@ var (
 		loadModel    *systray.MenuItem
 		unloadModel  *systray.MenuItem
 		webInterface *systray.MenuItem
+		autoStart    *systray.MenuItem
 		quit         *systray.MenuItem
 		models       []*systray.MenuItem
 	}
@@ -87,8 +90,25 @@ type ModelStatus struct {
 func main() {
 	hideConsole()
 
+	// 切换到可执行文件所在目录，确保能找到配置文件
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		if err := os.Chdir(exeDir); err != nil {
+			log.Printf("Warning: Failed to change working directory to %s: %v", exeDir, err)
+		} else {
+			log.Printf("Working directory changed to: %s", exeDir)
+		}
+	} else {
+		log.Printf("Warning: Failed to get executable path: %v", err)
+	}
+
 	if err := loadConfig(); err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// 同步开机自启状态：以注册表状态为准
+	if isAutoStartEnabled() != config.AutoStartEnabled {
+		config.AutoStartEnabled = isAutoStartEnabled()
 	}
 
 	if err := extractServer(); err != nil {
@@ -515,6 +535,23 @@ func buildMenuOnce() {
 		}
 	}()
 
+	menuItems.autoStart = systray.AddMenuItem("Auto Startup", "Toggle auto-start on boot")
+	go func() {
+		for range menuItems.autoStart.ClickedCh {
+			config.AutoStartEnabled = !config.AutoStartEnabled
+
+			if err := setAutoStart(config.AutoStartEnabled); err != nil {
+				log.Printf("Failed to update auto-start: %v", err)
+				config.AutoStartEnabled = !config.AutoStartEnabled
+			} else {
+				if err := saveConfig(); err != nil {
+					log.Printf("Failed to save config: %v", err)
+				}
+				refreshMenuState()
+			}
+		}
+	}()
+
 	systray.AddSeparator()
 
 	menuItems.quit = systray.AddMenuItem("Exit", "Exit program")
@@ -559,6 +596,12 @@ func refreshMenuState() {
 		} else {
 			item.Hide()
 		}
+	}
+
+	if config.AutoStartEnabled {
+		menuItems.autoStart.SetTitle("✓ Auto Startup")
+	} else {
+		menuItems.autoStart.SetTitle("Auto Startup")
 	}
 }
 
@@ -800,6 +843,53 @@ func waitForModelLoad(instance *modelInstance) {
 			return
 		}
 	}
+}
+
+func setAutoStart(enabled bool) error {
+	const regPath = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+	const regName = "lmgo"
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %v", err)
+	}
+
+	exeDir := filepath.Dir(exePath)
+	// 构建命令：切换到程序目录并运行程序，确保能找到配置文件
+	cmd := fmt.Sprintf("cd /d \"%s\" && \"%s\"", exeDir, exePath)
+
+	key, err := registry.OpenKey(registry.CURRENT_USER, regPath, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("failed to open registry key: %v", err)
+	}
+	defer key.Close()
+
+	if enabled {
+		err = key.SetStringValue(regName, cmd)
+		if err != nil {
+			return fmt.Errorf("failed to set registry value: %v", err)
+		}
+	} else {
+		err = key.DeleteValue(regName)
+		if err != nil && err != registry.ErrNotExist {
+			return fmt.Errorf("failed to delete registry value: %v", err)
+		}
+	}
+	return nil
+}
+
+func isAutoStartEnabled() bool {
+	const regPath = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+	const regName = "lmgo"
+
+	key, err := registry.OpenKey(registry.CURRENT_USER, regPath, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer key.Close()
+
+	_, _, err = key.GetStringValue(regName)
+	return err == nil
 }
 
 func waitForModelShutdown(instance *modelInstance) {

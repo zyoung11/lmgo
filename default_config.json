@@ -1,6 +1,7 @@
 {
   "modelDir": "./models",
   "autoOpenWebEnabled": true,
+  "autoStartEnabled": false,
   "basePort": 8080,
   "llamaServerPort": 8081,
   "defaultArgs": [
