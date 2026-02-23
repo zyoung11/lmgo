@@ -90,7 +90,6 @@ type ModelStatus struct {
 func main() {
 	hideConsole()
 
-	// 切换到可执行文件所在目录，确保能找到配置文件
 	if exePath, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exePath)
 		if err := os.Chdir(exeDir); err != nil {
@@ -106,7 +105,6 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// 同步开机自启状态：以注册表状态为准
 	if isAutoStartEnabled() != config.AutoStartEnabled {
 		config.AutoStartEnabled = isAutoStartEnabled()
 	}
@@ -855,7 +853,7 @@ func setAutoStart(enabled bool) error {
 	}
 
 	exeDir := filepath.Dir(exePath)
-	// 构建命令：切换到程序目录并运行程序，确保能找到配置文件
+
 	cmd := fmt.Sprintf("cd /d \"%s\" && \"%s\"", exeDir, exePath)
 
 	key, err := registry.OpenKey(registry.CURRENT_USER, regPath, registry.SET_VALUE)
