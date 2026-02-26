@@ -30,8 +30,9 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
 - **Web 界面**：每个加载的模型都有内置的 Web 界面
 - **开机自启**：可选择随 Windows 自动启动
 - **通知功能**：Windows 通知显示模型状态
-- **模型特定配置**：为不同模型提供自定义参数
-- **自动浏览器启动**：模型加载时自动打开 Web 界面
+ - **模型特定配置**：为不同模型提供自定义参数
+ - **自动浏览器启动**：模型加载时自动打开 Web 界面
+ - **模型排除模式**：支持使用 glob 模式排除特定模型或文件夹
 
 ### lmc (终端 UI)
 
@@ -44,7 +45,7 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
 
 应用程序创建 `lmgo.json` 配置文件，结构如下：
 
-```json
+ ```json
 {
   "modelDir": "./models",
   "autoOpenWebEnabled": true,
@@ -71,18 +72,39 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
     "--split-mode", "layer",
     "--main-gpu", "0"
   ],
-  "modelSpecificArgs": {}
+  "modelSpecificArgs": {},
+  "excludePatterns": []
 }
 ```
 
-### 配置选项
+ ### 配置选项
 
-- **modelDir**：包含 .gguf 模型文件的目录
-- **autoOpenWebEnabled**：模型加载时自动打开浏览器
-- **basePort**：API 服务器端口（默认：8080）- 由 lmc 和 HTTP API 使用
-- **llamaServerPort**：llama-server 端口（默认：8081）- 模型运行端口
-- **defaultArgs**：传递给 llama-server 的默认参数
-- **modelSpecificArgs**：特定模型的自定义参数
+ - **modelDir**：包含 .gguf 模型文件的目录
+ - **autoOpenWebEnabled**：模型加载时自动打开浏览器
+ - **basePort**：API 服务器端口（默认：8080）- 由 lmc 和 HTTP API 使用
+ - **llamaServerPort**：llama-server 端口（默认：8081）- 模型运行端口
+ - **defaultArgs**：传递给 llama-server 的默认参数
+ - **modelSpecificArgs**：特定模型的自定义参数
+ - **excludePatterns**：用于从列表中排除模型的 glob 模式列表（类似于 .gitignore）
+
+### 排除模式示例
+
+您可以使用 glob 模式排除特定模型或文件夹：
+
+```json
+"excludePatterns": [
+  "mmproj-35B-F16.gguf",           // 排除特定文件
+  "*-test.gguf",                   // 排除所有测试模型
+  "experimental/*",                // 排除整个文件夹
+  "backup/**/*.gguf"              // 排除 backup 子文件夹中的所有 .gguf 文件
+]
+```
+
+模式支持：
+- `*` 匹配任意非分隔符字符序列
+- `?` 匹配任意单个非分隔符字符
+- `[abc]` 匹配集合中的任意字符
+- `**` 匹配零个或多个目录
 
 ### API 端点
 

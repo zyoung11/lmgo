@@ -40,6 +40,7 @@ type Config struct {
 	LlamaServerPort   int                 `json:"llamaServerPort"`
 	DefaultArgs       []string            `json:"defaultArgs"`
 	ModelSpecificArgs map[string][]string `json:"modelSpecificArgs"`
+	ExcludePatterns   []string            `json:"excludePatterns,omitempty"`
 }
 
 var config Config
@@ -147,6 +148,9 @@ func loadConfig() error {
 		if config.ModelSpecificArgs == nil {
 			config.ModelSpecificArgs = make(map[string][]string)
 		}
+		if config.ExcludePatterns == nil {
+			config.ExcludePatterns = []string{}
+		}
 
 		if config.BasePort == config.LlamaServerPort {
 			return fmt.Errorf("API port (%d) and llama-server port (%d) cannot be the same", config.BasePort, config.LlamaServerPort)
@@ -183,8 +187,11 @@ func loadConfig() error {
 	if config.ModelSpecificArgs == nil {
 		config.ModelSpecificArgs = make(map[string][]string)
 	}
+	if config.ExcludePatterns == nil {
+		config.ExcludePatterns = []string{}
+	}
 
-	log.Printf("Config loaded: modelDir=%s, basePort=%d, llamaServerPort=%d", config.ModelDir, config.BasePort, config.LlamaServerPort)
+	log.Printf("Config loaded: modelDir=%s, basePort=%d, llamaServerPort=%d, excludePatterns=%v", config.ModelDir, config.BasePort, config.LlamaServerPort, config.ExcludePatterns)
 	return nil
 }
 
@@ -784,6 +791,11 @@ func findGGUFFiles(dir string) ([]modelEntry, error) {
 			path = abs
 		}
 
+		if isExcluded(name, path) {
+			log.Printf("Excluded model: %s", name)
+			continue
+		}
+
 		result = append(result, modelEntry{
 			Path:     path,
 			BaseName: strings.TrimSuffix(name, ".gguf"),
@@ -803,6 +815,36 @@ func findGGUFFiles(dir string) ([]modelEntry, error) {
 	}
 
 	return result, nil
+}
+
+func isExcluded(filename, fullPath string) bool {
+	if len(config.ExcludePatterns) == 0 {
+		return false
+	}
+
+	for _, pattern := range config.ExcludePatterns {
+		matched, err := filepath.Match(pattern, filename)
+		if err == nil && matched {
+			return true
+		}
+
+		matched, err = filepath.Match(pattern, filepath.Base(fullPath))
+		if err == nil && matched {
+			return true
+		}
+
+		if strings.Contains(pattern, "/") || strings.Contains(pattern, "\\") {
+			relPath, err := filepath.Rel(config.ModelDir, fullPath)
+			if err == nil {
+				matched, err = filepath.Match(pattern, relPath)
+				if err == nil && matched {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 func waitForModelLoad(instance *modelInstance) {

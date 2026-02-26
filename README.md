@@ -30,8 +30,9 @@ The embedded llama-server is compiled specifically for ROCm GFX1151 architecture
 - **Web Interface**: Built-in web interface for each loaded model
 - **Auto-start on Boot**: Option to start automatically with Windows
 - **Notifications**: Windows toast notifications for model status
-- **Model-specific Configuration**: Custom arguments for different models
-- **Automatic Web Browser Launch**: Option to automatically open web interface when models load
+ - **Model-specific Configuration**: Custom arguments for different models
+ - **Automatic Web Browser Launch**: Option to automatically open web interface when models load
+ - **Model Exclusion Patterns**: Support for excluding specific models or folders using glob patterns
 
 ### lmc (Terminal UI)
 
@@ -46,7 +47,7 @@ The embedded llama-server is compiled specifically for ROCm GFX1151 architecture
 
 The application creates a `lmgo.json` configuration file with the following structure:
 
-```json
+ ```json
 {
   "modelDir": "./models",
   "autoOpenWebEnabled": true,
@@ -73,18 +74,39 @@ The application creates a `lmgo.json` configuration file with the following stru
     "--split-mode", "layer",
     "--main-gpu", "0"
   ],
-  "modelSpecificArgs": {}
+  "modelSpecificArgs": {},
+  "excludePatterns": []
 }
 ```
 
-### Configuration Options
+ ### Configuration Options
 
-- **modelDir**: Directory containing .gguf model files
-- **autoOpenWebEnabled**: Automatically open browser when model loads
-- **basePort**: API server port (default: 8080) - used by lmc and HTTP API
-- **llamaServerPort**: llama-server port (default: 8081) - where models run
-- **defaultArgs**: Default arguments passed to llama-server
-- **modelSpecificArgs**: Custom arguments for specific models
+ - **modelDir**: Directory containing .gguf model files
+ - **autoOpenWebEnabled**: Automatically open browser when model loads
+ - **basePort**: API server port (default: 8080) - used by lmc and HTTP API
+ - **llamaServerPort**: llama-server port (default: 8081) - where models run
+ - **defaultArgs**: Default arguments passed to llama-server
+ - **modelSpecificArgs**: Custom arguments for specific models
+ - **excludePatterns**: List of glob patterns to exclude models from the list (similar to .gitignore)
+
+### Exclude Patterns Examples
+
+You can exclude specific models or folders using glob patterns:
+
+```json
+"excludePatterns": [
+  "mmproj-35B-F16.gguf",           // Exclude specific file
+  "*-test.gguf",                   // Exclude all test models
+  "experimental/*",                // Exclude entire folder
+  "backup/**/*.gguf"              // Exclude all .gguf files in backup subfolders
+]
+```
+
+Patterns support:
+- `*` matches any sequence of non-separator characters
+- `?` matches any single non-separator character
+- `[abc]` matches any character in the set
+- `**` matches zero or more directories
 
 ### API Endpoints
 

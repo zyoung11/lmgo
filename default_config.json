@@ -37,5 +37,6 @@
     "--main-gpu",
     "0"
   ],
-  "modelSpecificArgs": {}
+  "modelSpecificArgs": {},
+  "excludePatterns": []
 }
