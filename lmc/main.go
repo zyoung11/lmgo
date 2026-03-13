@@ -245,7 +245,7 @@ func loadConfig() (string, error) {
 func NewModel() Model {
 	baseURL, err := loadConfig()
 	if err != nil {
-		baseURL = "http://192.168.100.10:9696"
+		baseURL = "http://127.0.0.1:9696"
 	}
 
 	return Model{
