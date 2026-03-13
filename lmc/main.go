@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+//go:embed baseURL.json
+var configFS embed.FS
+
+type Config struct {
+	BaseURL string `json:"baseURL"`
+}
 
 type ModelInfo struct {
 	Index int    `json:"index"`
@@ -24,8 +32,9 @@ type ModelsResponse struct {
 }
 
 type StatusData struct {
-	Loaded bool `json:"loaded"`
-	Model  struct {
+	Loaded     bool   `json:"loaded"`
+	ConfigName string `json:"configName,omitempty"`
+	Model      struct {
 		BaseName string `json:"baseName"`
 		Path     string `json:"path"`
 	} `json:"model"`
@@ -64,11 +73,12 @@ type Model struct {
 	models      []ModelInfo
 	selectedIdx int
 
-	health          string
-	loadedModel     string
-	loadedModelName string
-	lastStatus      time.Time
-	statusError     bool
+	health           string
+	loadedModel      string
+	loadedModelName  string
+	loadedConfigName string
+	lastStatus       time.Time
+	statusError      bool
 
 	message       string
 	messageTime   time.Time
@@ -218,15 +228,35 @@ func unloadModel(baseURL string) tea.Cmd {
 	}
 }
 
+func loadConfig() (string, error) {
+	data, err := configFS.ReadFile("baseURL.json")
+	if err != nil {
+		return "", err
+	}
+
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return "", err
+	}
+
+	return config.BaseURL, nil
+}
+
 func NewModel() Model {
+	baseURL, err := loadConfig()
+	if err != nil {
+		baseURL = "http://192.168.100.10:9696"
+	}
+
 	return Model{
-		baseURL:     "http://192.168.100.10:9696",
-		state:       StateLoading,
-		selectedIdx: 0,
-		health:      "Checking...",
-		loadedModel: "None",
-		showHelp:    true,
-		loadingDots: 0,
+		baseURL:          baseURL,
+		state:            StateLoading,
+		selectedIdx:      0,
+		health:           "Checking...",
+		loadedModel:      "None",
+		loadedConfigName: "",
+		showHelp:         true,
+		loadingDots:      0,
 	}
 }
 
@@ -279,9 +309,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Data.Loaded {
 				m.loadedModel = msg.Data.Model.BaseName
 				m.loadedModelName = msg.Data.Model.BaseName
+				m.loadedConfigName = msg.Data.ConfigName
 			} else {
 				m.loadedModel = "None"
 				m.loadedModelName = ""
+				m.loadedConfigName = ""
 			}
 		}
 		return m, nil
@@ -455,7 +487,7 @@ func (m Model) View() string {
 
 			if i == m.selectedIdx {
 				item = selectedStyle.Render(fmt.Sprintf("➤  %s", item))
-			} else if model.Name == m.loadedModelName {
+			} else if model.Name == m.loadedConfigName || (m.loadedConfigName == "" && model.Name == m.loadedModelName) {
 				item = loadedStyle.Render(fmt.Sprintf("  %s", item))
 			} else {
 				item = modelItemStyle.Render(fmt.Sprintf("  %s", item))

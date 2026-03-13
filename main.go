@@ -32,15 +32,21 @@ var serverArchives embed.FS
 //go:embed default_config.json
 var defaultConfigData []byte
 
+type ModelConfig struct {
+	Name   string   `json:"name"`
+	Target string   `json:"target"`
+	Args   []string `json:"args"`
+}
+
 type Config struct {
-	ModelDir          string              `json:"modelDir"`
-	AutoOpenWeb       bool                `json:"autoOpenWebEnabled"`
-	AutoStartEnabled  bool                `json:"autoStartEnabled"`
-	BasePort          int                 `json:"basePort"`
-	LlamaServerPort   int                 `json:"llamaServerPort"`
-	DefaultArgs       []string            `json:"defaultArgs"`
-	ModelSpecificArgs map[string][]string `json:"modelSpecificArgs"`
-	ExcludePatterns   []string            `json:"excludePatterns,omitempty"`
+	ModelDir          string        `json:"modelDir"`
+	AutoOpenWeb       bool          `json:"autoOpenWebEnabled"`
+	AutoStartEnabled  bool          `json:"autoStartEnabled"`
+	BasePort          int           `json:"basePort"`
+	LlamaServerPort   int           `json:"llamaServerPort"`
+	DefaultArgs       []string      `json:"defaultArgs"`
+	ModelSpecificArgs []ModelConfig `json:"modelSpecificArgs"`
+	ExcludePatterns   []string      `json:"excludePatterns,omitempty"`
 }
 
 var config Config
@@ -61,18 +67,23 @@ var (
 		autoStart    *systray.MenuItem
 		quit         *systray.MenuItem
 		models       []*systray.MenuItem
+		modelConfigs [][]*systray.MenuItem
 	}
 )
 
 type modelEntry struct {
-	Path     string `json:"path"`
-	BaseName string `json:"baseName"`
+	Path        string `json:"path"`
+	BaseName    string `json:"baseName"`
+	ConfigIndex int    `json:"configIndex,omitempty"`
+	ConfigName  string `json:"configName,omitempty"`
 }
 
 type modelInstance struct {
-	entry modelEntry
-	cmd   *exec.Cmd
-	port  int
+	entry       modelEntry
+	cmd         *exec.Cmd
+	port        int
+	configIndex int
+	configName  string
 }
 
 type APIResponse struct {
@@ -86,6 +97,7 @@ type ModelStatus struct {
 	Model      modelEntry `json:"model,omitempty"`
 	Port       int        `json:"port,omitempty"`
 	ServerPort int        `json:"serverPort,omitempty"`
+	ConfigName string     `json:"configName,omitempty"`
 }
 
 func main() {
@@ -146,7 +158,7 @@ func loadConfig() error {
 		}
 
 		if config.ModelSpecificArgs == nil {
-			config.ModelSpecificArgs = make(map[string][]string)
+			config.ModelSpecificArgs = []ModelConfig{}
 		}
 		if config.ExcludePatterns == nil {
 			config.ExcludePatterns = []string{}
@@ -185,7 +197,7 @@ func loadConfig() error {
 	}
 
 	if config.ModelSpecificArgs == nil {
-		config.ModelSpecificArgs = make(map[string][]string)
+		config.ModelSpecificArgs = []ModelConfig{}
 	}
 	if config.ExcludePatterns == nil {
 		config.ExcludePatterns = []string{}
@@ -340,13 +352,42 @@ func handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := make([]map[string]interface{}, len(currentModels))
+	var models []map[string]interface{}
+	modelIndex := 0
+
 	for i, m := range currentModels {
-		models[i] = map[string]interface{}{
-			"index":    i,
-			"name":     m.BaseName,
-			"path":     m.Path,
-			"filename": filepath.Base(m.Path),
+		modelConfigs := []ModelConfig{}
+		for _, cfg := range config.ModelSpecificArgs {
+			if cfg.Target == m.BaseName {
+				modelConfigs = append(modelConfigs, cfg)
+			}
+		}
+
+		if len(modelConfigs) > 0 {
+			for configIdx, cfg := range modelConfigs {
+				models = append(models, map[string]interface{}{
+					"index":       modelIndex,
+					"modelIndex":  i,
+					"configIndex": configIdx,
+					"name":        cfg.Name,
+					"path":        m.Path,
+					"filename":    filepath.Base(m.Path),
+					"hasConfig":   true,
+					"configName":  cfg.Name,
+				})
+				modelIndex++
+			}
+		} else {
+			models = append(models, map[string]interface{}{
+				"index":       modelIndex,
+				"modelIndex":  i,
+				"configIndex": -1,
+				"name":        m.BaseName,
+				"path":        m.Path,
+				"filename":    filepath.Base(m.Path),
+				"hasConfig":   false,
+			})
+			modelIndex++
 		}
 	}
 
@@ -377,6 +418,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	if runningModel != nil {
 		status.Model = runningModel.entry
 		status.Port = runningModel.port
+		status.ConfigName = runningModel.configName
 	}
 
 	writeJSON(w, http.StatusOK, APIResponse{
@@ -403,8 +445,50 @@ func handleLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idx, err := strconv.Atoi(idxStr)
-	if err != nil || idx < 0 || idx >= len(currentModels) {
+	apiIndex, err := strconv.Atoi(idxStr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, APIResponse{
+			Success: false,
+			Message: "Invalid index",
+		})
+		return
+	}
+
+	modelIndex, configIndex := -1, -1
+	currentIndex := 0
+
+	for i, m := range currentModels {
+		modelConfigs := []ModelConfig{}
+		for _, cfg := range config.ModelSpecificArgs {
+			if cfg.Target == m.BaseName {
+				modelConfigs = append(modelConfigs, cfg)
+			}
+		}
+
+		if len(modelConfigs) > 0 {
+			for configIdx := range modelConfigs {
+				if currentIndex == apiIndex {
+					modelIndex = i
+					configIndex = configIdx
+					break
+				}
+				currentIndex++
+			}
+		} else {
+			if currentIndex == apiIndex {
+				modelIndex = i
+				configIndex = -1
+				break
+			}
+			currentIndex++
+		}
+
+		if modelIndex != -1 {
+			break
+		}
+	}
+
+	if modelIndex == -1 || modelIndex >= len(currentModels) {
 		writeJSON(w, http.StatusBadRequest, APIResponse{
 			Success: false,
 			Message: "Invalid index",
@@ -413,24 +497,24 @@ func handleLoad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runningModelsMu.RLock()
-	alreadyLoaded := runningModel != nil && runningModel.entry.Path == currentModels[idx].Path
+	alreadyLoaded := runningModel != nil && runningModel.entry.Path == currentModels[modelIndex].Path
 	runningModelsMu.RUnlock()
 
 	if alreadyLoaded {
 		writeJSON(w, http.StatusOK, APIResponse{
 			Success: true,
 			Message: "Model already loaded",
-			Data:    currentModels[idx],
+			Data:    currentModels[modelIndex],
 		})
 		return
 	}
 
-	loadModel(idx)
+	loadModel(modelIndex, configIndex)
 
 	writeJSON(w, http.StatusOK, APIResponse{
 		Success: true,
 		Message: "Model loading started",
-		Data:    currentModels[idx],
+		Data:    currentModels[modelIndex],
 	})
 }
 
@@ -469,11 +553,24 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func getModelArgs(entry modelEntry) []string {
-	if args, exists := config.ModelSpecificArgs[entry.BaseName]; exists && len(args) > 0 {
-		log.Printf("Using model-specific config for %s", entry.BaseName)
-		return args
+func getModelArgs(entry modelEntry, configIndex int) []string {
+	var matchingConfigs []ModelConfig
+	for _, cfg := range config.ModelSpecificArgs {
+		if cfg.Target == entry.BaseName {
+			matchingConfigs = append(matchingConfigs, cfg)
+		}
 	}
+
+	if len(matchingConfigs) > 0 {
+		if configIndex >= 0 && configIndex < len(matchingConfigs) {
+			log.Printf("Using config '%s' for %s", matchingConfigs[configIndex].Name, entry.BaseName)
+			return matchingConfigs[configIndex].Args
+		} else if len(matchingConfigs) > 0 {
+			log.Printf("Using first config '%s' for %s", matchingConfigs[0].Name, entry.BaseName)
+			return matchingConfigs[0].Args
+		}
+	}
+
 	log.Printf("Using default config for %s", entry.BaseName)
 	return config.DefaultArgs
 }
@@ -513,15 +610,40 @@ func onReady() {
 func buildMenuOnce() {
 	menuItems.loadModel = systray.AddMenuItem("Load Model", "Select a model to load")
 
-	for i := 0; i < len(currentModels); i++ {
-		item := menuItems.loadModel.AddSubMenuItem("", "")
-		menuItems.models = append(menuItems.models, item)
+	menuItems.models = []*systray.MenuItem{}
+	menuItems.modelConfigs = [][]*systray.MenuItem{}
 
-		go func(idx int, menuItem *systray.MenuItem) {
-			for range menuItem.ClickedCh {
-				loadModel(idx)
+	for i := 0; i < len(currentModels); i++ {
+		m := currentModels[i]
+
+		modelConfigs := []ModelConfig{}
+		for _, cfg := range config.ModelSpecificArgs {
+			if cfg.Target == m.BaseName {
+				modelConfigs = append(modelConfigs, cfg)
 			}
-		}(i, item)
+		}
+
+		if len(modelConfigs) > 0 {
+			for configIdx, cfg := range modelConfigs {
+				item := menuItems.loadModel.AddSubMenuItem(cfg.Name, "")
+				menuItems.models = append(menuItems.models, item)
+
+				go func(modelIdx int, cfgIdx int, menuItem *systray.MenuItem) {
+					for range menuItem.ClickedCh {
+						loadModel(modelIdx, cfgIdx)
+					}
+				}(i, configIdx, item)
+			}
+		} else {
+			item := menuItems.loadModel.AddSubMenuItem(m.BaseName, "")
+			menuItems.models = append(menuItems.models, item)
+
+			go func(modelIdx int, menuItem *systray.MenuItem) {
+				for range menuItem.ClickedCh {
+					loadModel(modelIdx, -1)
+				}
+			}(i, item)
+		}
 	}
 
 	menuItems.unloadModel = systray.AddMenuItem("Unload Model", "Unload the model")
@@ -580,27 +702,64 @@ func refreshMenuState() {
 		menuItems.webInterface.Disable()
 	}
 
-	for i, item := range menuItems.models {
-		if i < len(currentModels) {
-			m := currentModels[i]
-			title := filepath.Base(m.Path)
-
-			runningModelsMu.RLock()
-			isCurrent := hasRunningModel && runningModel.entry.Path == m.Path
-			runningModelsMu.RUnlock()
-
-			if isCurrent {
-				title = "● " + title
-			} else {
-				title = "○ " + title
+	menuItemIndex := 0
+	for _, m := range currentModels {
+		modelConfigs := []ModelConfig{}
+		for _, cfg := range config.ModelSpecificArgs {
+			if cfg.Target == m.BaseName {
+				modelConfigs = append(modelConfigs, cfg)
 			}
-
-			item.SetTitle(title)
-			item.SetTooltip(fmt.Sprintf("Load %s", title))
-			item.Show()
-		} else {
-			item.Hide()
 		}
+
+		if len(modelConfigs) > 0 {
+			for configIdx, cfg := range modelConfigs {
+				if menuItemIndex < len(menuItems.models) {
+					item := menuItems.models[menuItemIndex]
+
+					runningModelsMu.RLock()
+					isCurrent := hasRunningModel &&
+						runningModel.entry.Path == m.Path &&
+						runningModel.configIndex == configIdx
+					runningModelsMu.RUnlock()
+
+					title := cfg.Name
+					if isCurrent {
+						title = "● " + title
+					} else {
+						title = "○ " + title
+					}
+
+					item.SetTitle(title)
+					item.SetTooltip(fmt.Sprintf("Load %s with %s", m.BaseName, cfg.Name))
+					item.Show()
+					menuItemIndex++
+				}
+			}
+		} else {
+			if menuItemIndex < len(menuItems.models) {
+				item := menuItems.models[menuItemIndex]
+
+				runningModelsMu.RLock()
+				isCurrent := hasRunningModel && runningModel.entry.Path == m.Path
+				runningModelsMu.RUnlock()
+
+				title := m.BaseName
+				if isCurrent {
+					title = "● " + title
+				} else {
+					title = "○ " + title
+				}
+
+				item.SetTitle(title)
+				item.SetTooltip(fmt.Sprintf("Load %s", m.BaseName))
+				item.Show()
+				menuItemIndex++
+			}
+		}
+	}
+
+	for j := menuItemIndex; j < len(menuItems.models); j++ {
+		menuItems.models[j].Hide()
 	}
 
 	if config.AutoStartEnabled {
@@ -624,7 +783,7 @@ func openCurrentModelWebInterface() {
 	}
 }
 
-func loadModel(idx int) {
+func loadModel(idx int, configIndex int) {
 	if idx < 0 || idx >= len(currentModels) {
 		return
 	}
@@ -645,8 +804,18 @@ func loadModel(idx int) {
 	}
 
 	instance := &modelInstance{
-		entry: entry,
-		port:  config.LlamaServerPort,
+		entry:       entry,
+		port:        config.LlamaServerPort,
+		configIndex: configIndex,
+	}
+
+	if configIndex >= 0 {
+		for _, cfg := range config.ModelSpecificArgs {
+			if cfg.Target == entry.BaseName {
+				instance.configName = cfg.Name
+				break
+			}
+		}
 	}
 
 	runningModel = instance
@@ -705,7 +874,7 @@ func runLlamaServer(instance *modelInstance) {
 		"--port", strconv.Itoa(instance.port),
 	}
 
-	modelArgs := getModelArgs(instance.entry)
+	modelArgs := getModelArgs(instance.entry, instance.configIndex)
 	args = append(args, modelArgs...)
 
 	log.Printf("Starting model %s on port %d", filepath.Base(instance.entry.Path), instance.port)

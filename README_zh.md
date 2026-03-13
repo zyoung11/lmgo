@@ -1,5 +1,7 @@
 # lmgo
 
+![tray](tray.jpg)
+
 [English README](README.md)
 
 lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cpp 服务器和 **ROCm** GPU 加速。它包含：
@@ -30,22 +32,23 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
 - **Web 界面**：每个加载的模型都有内置的 Web 界面
 - **开机自启**：可选择随 Windows 自动启动
 - **通知功能**：Windows 通知显示模型状态
- - **模型特定配置**：为不同模型提供自定义参数
+ - **多配置支持**：同一模型支持多个配置，每个配置显示为独立选项
  - **自动浏览器启动**：模型加载时自动打开 Web 界面
  - **模型排除模式**：支持使用 glob 模式排除特定模型或文件夹
 
-### lmc (终端 UI)
+ ### lmc (终端 UI)
 
 - **终端界面**：基于 TUI 的模型管理，支持键盘快捷键
 - **实时状态**：实时显示模型加载/卸载状态
 - **API 集成**：与 lmgo 的 REST API 通信进行模型控制
 - **键盘绑定**：直观的键盘控制（方向键、Enter、U、Q）
+- **多配置支持**：将所有模型配置显示为独立条目
 
 ## 配置
 
 应用程序创建 `lmgo.json` 配置文件，结构如下：
 
- ```json
+  ```json
 {
   "modelDir": "./models",
   "autoOpenWebEnabled": true,
@@ -72,10 +75,10 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
     "--split-mode", "layer",
     "--main-gpu", "0"
   ],
-  "modelSpecificArgs": {},
+  "modelSpecificArgs": [],
   "excludePatterns": []
 }
-```
+  ```
 
  ### 配置选项
 
@@ -84,8 +87,34 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
  - **basePort**：API 服务器端口（默认：8080）- 由 lmc 和 HTTP API 使用
  - **llamaServerPort**：llama-server 端口（默认：8081）- 模型运行端口
  - **defaultArgs**：传递给 llama-server 的默认参数
- - **modelSpecificArgs**：特定模型的自定义参数
+  - **modelSpecificArgs**：模型配置数组，允许为每个模型定义多个配置
  - **excludePatterns**：用于从列表中排除模型的 glob 模式列表（类似于 .gitignore）
+
+ ### 多配置支持
+
+您可以为同一模型定义多个配置，每个配置在菜单和 API 中显示为独立选项：
+
+```json
+"modelSpecificArgs": [
+  {
+    "name": "Llama-3 (极速模式)",
+    "target": "Llama-3-8B-Instruct",
+    "args": ["-ngl", "10", "-c", "2048", "--batch-size", "512"]
+  },
+  {
+    "name": "Llama-3 (超长上下文)",
+    "target": "Llama-3-8B-Instruct",
+    "args": ["-ngl", "99", "-c", "32768"]
+  },
+  {
+    "name": "Qwen2.5-7B (优化版)",
+    "target": "Qwen2.5-7B-Instruct",
+    "args": ["-ngl", "35", "-c", "8192", "--batch-size", "1024"]
+  }
+]
+```
+
+**注意：** 当模型在 `modelSpecificArgs` 中定义了配置时，默认配置不会显示为选项。
 
 ### 排除模式示例
 
@@ -106,13 +135,42 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
 - `[abc]` 匹配集合中的任意字符
 - `**` 匹配零个或多个目录
 
-### API 端点
+ ### API 端点
 
-- `GET /api/models` - 列出所有可用模型
+- `GET /api/models` - 列出所有可用模型和配置
 - `GET /api/status` - 获取当前模型状态
-- `POST /api/load?index=N` - 加载索引为 N 的模型
+- `POST /api/load?index=N` - 加载索引为 N 的模型（配置作为独立索引包含在内）
 - `POST /api/unload` - 卸载当前模型
 - `GET /api/health` - 健康检查
+
+**API 响应示例：**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "index": 0,
+      "modelIndex": 0,
+      "configIndex": 0,
+      "name": "Llama-3 (极速模式)",
+      "path": "D:/LLM/Llama-3-8B-Instruct.gguf",
+      "filename": "Llama-3-8B-Instruct.gguf",
+      "hasConfig": true,
+      "configName": "Llama-3 (极速模式)"
+    },
+    {
+      "index": 1,
+      "modelIndex": 0,
+      "configIndex": 1,
+      "name": "Llama-3 (超长上下文)",
+      "path": "D:/LLM/Llama-3-8B-Instruct.gguf",
+      "filename": "Llama-3-8B-Instruct.gguf",
+      "hasConfig": true,
+      "configName": "Llama-3 (超长上下文)"
+    }
+  ]
+}
+```
 
 ## 从源代码构建 lmgo (系统托盘)
 
@@ -123,10 +181,22 @@ go mod tidy
 go build -ldflags "-s -w -H windowsgui" -buildvcs=false .
 ```
 
-## 从源代码构建 lmc (终端 UI)
+ ## 从源代码构建 lmc (终端 UI)
 
 ```bash
 cd lmc
 go mod tidy
 go build -buildvcs=false .
 ```
+
+### lmc 配置
+
+lmc 使用嵌入式配置文件 `baseURL.json`，用于指定 lmgo API 端点：
+
+```json
+{
+  "baseURL": "http://127.0.0.1:9696"
+}
+```
+
+**注意：** lmc 会自动显示 lmgo 中的所有模型配置，每个配置在终端界面中显示为独立条目。每个配置都作为独立的模型选项出现。
