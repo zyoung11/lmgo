@@ -124,10 +124,10 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
 
 ```json
 "excludePatterns": [
-  "mmproj-35B-F16.gguf",           // 排除特定文件
-  "*-test.gguf",                   // 排除所有测试模型
-  "experimental/*",                // 排除整个文件夹
-  "backup/**/*.gguf"              // 排除 backup 子文件夹中的所有 .gguf 文件
+  "mmproj-35B-F16.gguf",
+  "*-test.gguf",
+  "experimental/*",
+  "backup/**/*.gguf"
 ]
 ```
 

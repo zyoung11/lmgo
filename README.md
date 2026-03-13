@@ -124,10 +124,10 @@ You can exclude specific models or folders using glob patterns:
 
 ```json
 "excludePatterns": [
-  "mmproj-35B-F16.gguf",           // Exclude specific file
-  "*-test.gguf",                   // Exclude all test models
-  "experimental/*",                // Exclude entire folder
-  "backup/**/*.gguf"              // Exclude all .gguf files in backup subfolders
+  "mmproj-35B-F16.gguf",
+  "*-test.gguf",
+  "experimental/*",
+  "backup/**/*.gguf"
 ]
 ```
 
