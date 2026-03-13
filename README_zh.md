@@ -38,6 +38,8 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
 
  ### lmc (终端 UI)
 
+![lmc](lmc.jpg)
+
 - **终端界面**：基于 TUI 的模型管理，支持键盘快捷键
 - **实时状态**：实时显示模型加载/卸载状态
 - **API 集成**：与 lmgo 的 REST API 通信进行模型控制
@@ -178,7 +180,7 @@ lmgo 是一个用于运行本地大语言模型的工具套件，使用 llama.cp
 
 ```bash
 go mod tidy
-go build -ldflags "-s -w -H windowsgui" -buildvcs=false .
+go build -ldflags "-s -w -H windowsgui" .
 ```
 
  ## 从源代码构建 lmc (终端 UI)
@@ -186,7 +188,7 @@ go build -ldflags "-s -w -H windowsgui" -buildvcs=false .
 ```bash
 cd lmc
 go mod tidy
-go build -buildvcs=false .
+go build .
 ```
 
 ### lmc 配置

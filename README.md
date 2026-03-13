@@ -38,13 +38,13 @@ The embedded llama-server is compiled specifically for ROCm GFX1151 architecture
 
  ### lmc (Terminal UI)
 
+![lmc](lmc.jpg)
+
 - **Terminal Interface**: TUI-based model management with keyboard shortcuts
 - **Real-time Status**: Live display of model loading/unloading status
 - **API Integration**: Communicates with lmgo's REST API for model control
 - **Key Bindings**: Intuitive keyboard controls (Arrow keys, Enter, U, Q)
 - **Multi-Configuration Support**: Displays all model configurations as separate entries
-
-
 
 ## Configuration
 
