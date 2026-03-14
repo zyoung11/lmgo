@@ -35,6 +35,7 @@ The embedded llama-server is compiled specifically for ROCm GFX1151 architecture
  - **Multi-Configuration Support**: Multiple configurations for the same model, each displayed as a separate option
  - **Automatic Web Browser Launch**: Option to automatically open web interface when models load
  - **Model Exclusion Patterns**: Support for excluding specific models or folders using glob patterns
+ - **Config Refresh**: Refresh button to reload configuration and rescan models without restarting
 
  ### lmc (Terminal UI)
 

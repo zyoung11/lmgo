@@ -65,6 +65,7 @@ var (
 		unloadModel  *systray.MenuItem
 		webInterface *systray.MenuItem
 		autoStart    *systray.MenuItem
+		refresh      *systray.MenuItem
 		quit         *systray.MenuItem
 		models       []*systray.MenuItem
 		modelConfigs [][]*systray.MenuItem
@@ -662,6 +663,13 @@ func buildMenuOnce() {
 		}
 	}()
 
+	menuItems.refresh = systray.AddMenuItem("Refresh", "Reload config and rescan models")
+	go func() {
+		for range menuItems.refresh.ClickedCh {
+			refreshConfigAndModels()
+		}
+	}()
+
 	systray.AddSeparator()
 
 	menuItems.quit = systray.AddMenuItem("Exit", "Exit program")
@@ -1077,4 +1085,62 @@ func waitForModelShutdown(instance *modelInstance) {
 			return
 		}
 	}
+}
+
+func refreshConfigAndModels() {
+	if err := loadConfig(); err != nil {
+		log.Printf("Failed to reload config: %v", err)
+		return
+	}
+
+	models, err := findGGUFFiles(config.ModelDir)
+	if err != nil {
+		log.Printf("Error scanning model files: %v", err)
+		return
+	}
+
+	currentModels = models
+
+	for i := 0; i < len(menuItems.models); i++ {
+		menuItems.models[i].Hide()
+	}
+
+	menuItems.models = []*systray.MenuItem{}
+	menuItems.modelConfigs = [][]*systray.MenuItem{}
+
+	for i := 0; i < len(currentModels); i++ {
+		m := currentModels[i]
+
+		modelConfigs := []ModelConfig{}
+		for _, cfg := range config.ModelSpecificArgs {
+			if cfg.Target == m.BaseName {
+				modelConfigs = append(modelConfigs, cfg)
+			}
+		}
+
+		if len(modelConfigs) > 0 {
+			for configIdx, cfg := range modelConfigs {
+				item := menuItems.loadModel.AddSubMenuItem(cfg.Name, "")
+				menuItems.models = append(menuItems.models, item)
+
+				go func(modelIdx int, cfgIdx int, menuItem *systray.MenuItem) {
+					for range menuItem.ClickedCh {
+						loadModel(modelIdx, cfgIdx)
+					}
+				}(i, configIdx, item)
+			}
+		} else {
+			item := menuItems.loadModel.AddSubMenuItem(m.BaseName, "")
+			menuItems.models = append(menuItems.models, item)
+
+			go func(modelIdx int, menuItem *systray.MenuItem) {
+				for range menuItem.ClickedCh {
+					loadModel(modelIdx, -1)
+				}
+			}(i, item)
+		}
+	}
+
+	refreshMenuState()
+	log.Printf("Config reloaded and models rescanned. Found %d models.", len(currentModels))
 }
