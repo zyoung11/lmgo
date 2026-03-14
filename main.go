@@ -429,34 +429,24 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func handleLoad(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, APIResponse{
-			Success: false,
-			Message: "Method not allowed",
-		})
+		writeJSON(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
 		return
 	}
 
 	idxStr := r.URL.Query().Get("index")
 	if idxStr == "" {
-		writeJSON(w, http.StatusBadRequest, APIResponse{
-			Success: false,
-			Message: "Missing index parameter",
-		})
+		writeJSON(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Missing index parameter"})
 		return
 	}
 
 	apiIndex, err := strconv.Atoi(idxStr)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, APIResponse{
-			Success: false,
-			Message: "Invalid index",
-		})
+		writeJSON(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid index"})
 		return
 	}
 
 	modelIndex, configIndex := -1, -1
 	currentIndex := 0
-
 	for i, m := range currentModels {
 		modelConfigs := []ModelConfig{}
 		for _, cfg := range config.ModelSpecificArgs {
@@ -464,7 +454,6 @@ func handleLoad(w http.ResponseWriter, r *http.Request) {
 				modelConfigs = append(modelConfigs, cfg)
 			}
 		}
-
 		if len(modelConfigs) > 0 {
 			for configIdx := range modelConfigs {
 				if currentIndex == apiIndex {
@@ -482,38 +471,32 @@ func handleLoad(w http.ResponseWriter, r *http.Request) {
 			}
 			currentIndex++
 		}
-
 		if modelIndex != -1 {
 			break
 		}
 	}
 
 	if modelIndex == -1 || modelIndex >= len(currentModels) {
-		writeJSON(w, http.StatusBadRequest, APIResponse{
-			Success: false,
-			Message: "Invalid index",
-		})
+		writeJSON(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid index"})
 		return
 	}
 
 	runningModelsMu.RLock()
 	alreadyLoaded := runningModel != nil && runningModel.entry.Path == currentModels[modelIndex].Path
 	runningModelsMu.RUnlock()
-
 	if alreadyLoaded {
-		writeJSON(w, http.StatusOK, APIResponse{
-			Success: true,
-			Message: "Model already loaded",
-			Data:    currentModels[modelIndex],
-		})
+		writeJSON(w, http.StatusOK, APIResponse{Success: true, Message: "Model already loaded", Data: currentModels[modelIndex]})
 		return
 	}
 
-	loadModel(modelIndex, configIndex)
+	if err := loadModel(modelIndex, configIndex); err != nil {
+		writeJSON(w, http.StatusInternalServerError, APIResponse{Success: false, Message: fmt.Sprintf("Failed to load model: %v", err)})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, APIResponse{
 		Success: true,
-		Message: "Model loading started",
+		Message: "Model loaded successfully",
 		Data:    currentModels[modelIndex],
 	})
 }
@@ -783,9 +766,9 @@ func openCurrentModelWebInterface() {
 	}
 }
 
-func loadModel(idx int, configIndex int) {
+func loadModel(idx int, configIndex int) error {
 	if idx < 0 || idx >= len(currentModels) {
-		return
+		return fmt.Errorf("invalid model index")
 	}
 
 	if err := loadConfig(); err != nil {
@@ -795,12 +778,9 @@ func loadModel(idx int, configIndex int) {
 	entry := currentModels[idx]
 
 	runningModelsMu.Lock()
-
 	if runningModel != nil {
 		stopModelInstance(runningModel)
-		runningModelsMu.Unlock()
-		time.Sleep(1 * time.Second)
-		runningModelsMu.Lock()
+		runningModel = nil
 	}
 
 	instance := &modelInstance{
@@ -808,7 +788,6 @@ func loadModel(idx int, configIndex int) {
 		port:        config.LlamaServerPort,
 		configIndex: configIndex,
 	}
-
 	if configIndex >= 0 {
 		for _, cfg := range config.ModelSpecificArgs {
 			if cfg.Target == entry.BaseName {
@@ -818,11 +797,54 @@ func loadModel(idx int, configIndex int) {
 		}
 	}
 
+	args := []string{
+		"-m", instance.entry.Path,
+		"--port", strconv.Itoa(instance.port),
+	}
+	modelArgs := getModelArgs(instance.entry, instance.configIndex)
+	args = append(args, modelArgs...)
+
+	log.Printf("Starting model %s on port %d", filepath.Base(instance.entry.Path), instance.port)
+
+	cmd := exec.Command(serverPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	if err := cmd.Start(); err != nil {
+		runningModelsMu.Unlock()
+		return fmt.Errorf("failed to start llama-server: %v", err)
+	}
+
+	instance.cmd = cmd
 	runningModel = instance
 	runningModelsMu.Unlock()
 
-	go runLlamaServer(instance)
+	if err := waitForModelLoad(instance); err != nil {
+		runningModelsMu.Lock()
+		if runningModel == instance {
+			stopModelInstance(instance)
+			runningModel = nil
+		}
+		runningModelsMu.Unlock()
+		return err
+	}
+
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			log.Printf("llama-server exited abnormally: %v", err)
+		}
+		runningModelsMu.Lock()
+		if runningModel == instance {
+			runningModel = nil
+		}
+		runningModelsMu.Unlock()
+		go refreshMenuState()
+	}()
+
 	refreshMenuState()
+	return nil
 }
 
 func unloadModel() {
@@ -866,67 +888,6 @@ func stopAllModels() {
 		runningModel = nil
 	}
 	runningModelsMu.Unlock()
-}
-
-func runLlamaServer(instance *modelInstance) {
-	args := []string{
-		"-m", instance.entry.Path,
-		"--port", strconv.Itoa(instance.port),
-	}
-
-	modelArgs := getModelArgs(instance.entry, instance.configIndex)
-	args = append(args, modelArgs...)
-
-	log.Printf("Starting model %s on port %d", filepath.Base(instance.entry.Path), instance.port)
-
-	if config.AutoOpenWeb {
-		go func() {
-			openBrowser(fmt.Sprintf("http://127.0.0.1:%d", instance.port))
-		}()
-	}
-
-	cmd := exec.Command(serverPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-
-	runningModelsMu.Lock()
-	instance.cmd = cmd
-	runningModelsMu.Unlock()
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to start llama-server: %v", err)
-
-		runningModelsMu.Lock()
-		if runningModel == instance {
-			runningModel = nil
-		}
-		runningModelsMu.Unlock()
-
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			refreshMenuState()
-		}()
-		return
-	}
-
-	waitForModelLoad(instance)
-
-	err := cmd.Wait()
-	if err != nil {
-		log.Printf("llama-server exited abnormally: %v", err)
-
-		runningModelsMu.Lock()
-		if runningModel == instance {
-			runningModel = nil
-		}
-		runningModelsMu.Unlock()
-
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			refreshMenuState()
-		}()
-	}
 }
 
 func onExit() {
@@ -1016,10 +977,9 @@ func isExcluded(filename, fullPath string) bool {
 	return false
 }
 
-func waitForModelLoad(instance *modelInstance) {
+func waitForModelLoad(instance *modelInstance) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	url := fmt.Sprintf("http://127.0.0.1:%d/models", instance.port)
-
 	timeout := time.After(5 * time.Minute)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -1032,9 +992,7 @@ func waitForModelLoad(instance *modelInstance) {
 				continue
 			}
 			defer resp.Body.Close()
-
 			body, _ := io.ReadAll(resp.Body)
-
 			var responseMap map[string]interface{}
 			if err := json.Unmarshal(body, &responseMap); err == nil {
 				if errorObj, ok := responseMap["error"].(map[string]interface{}); ok {
@@ -1043,13 +1001,9 @@ func waitForModelLoad(instance *modelInstance) {
 					}
 				}
 			}
-
-			log.Printf("Model %s finished loading on port %d", filepath.Base(instance.entry.Path), instance.port)
-			return
-
+			return nil
 		case <-timeout:
-			log.Printf("Timeout waiting for model to load on port %d", instance.port)
-			return
+			return fmt.Errorf("timeout waiting for model to load on port %d", instance.port)
 		}
 	}
 }
