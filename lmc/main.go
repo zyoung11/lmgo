@@ -174,23 +174,29 @@ func loadModel(baseURL string, index int) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
 		url := fmt.Sprintf("%s/api/load?index=%d", baseURL, index)
+
 		resp, err := http.Post(url, "application/json", nil)
 		if err != nil {
 			return errorMsg(fmt.Sprintf("Failed to load model: %v", err))
 		}
 		defer resp.Body.Close()
+
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return errorMsg(fmt.Sprintf("Failed to read response: %v", err))
 		}
+
 		var data SimpleResponse
 		if err := json.Unmarshal(body, &data); err != nil {
 			return errorMsg(fmt.Sprintf("Failed to parse response: %v", err))
 		}
+
+		elapsed := time.Since(start)
+
 		if !data.Success {
 			return errorMsg(fmt.Sprintf("Load failed: %s", data.Message))
 		}
-		elapsed := time.Since(start)
+
 		return successMsg{message: data.Message, time: elapsed}
 	}
 }
@@ -267,31 +273,38 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return handleKeyMsg(m, msg)
+
 	case tea.WindowSizeMsg:
 		m.windowWidth = msg.Width
 		m.windowHeight = msg.Height
 		return m, nil
+
 	case tickMsg:
 		m.loadingDots = (m.loadingDots + 1) % 4
-		if time.Since(m.lastStatus) > 2*time.Second {
+
+		if time.Since(m.lastStatus) > 1*time.Second {
 			m.lastStatus = time.Now()
 			cmds = append(cmds, fetchStatus(m.baseURL), fetchHealth(m.baseURL))
 		}
+
 		if m.state == StateSuccess || m.state == StateError {
 			if time.Since(m.messageTime) > 3*time.Second {
 				m.state = StateReady
 			}
 		}
 		return m, tea.Batch(append(cmds, tickCmd())...)
+
 	case modelsMsg:
 		m.models = msg.Data
 		if len(m.models) > 0 {
 			m.state = StateReady
 		}
 		return m, nil
+
 	case statusMsg:
 		if msg.Success {
 			m.statusError = false
@@ -299,12 +312,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loadedModel = msg.Data.Model.BaseName
 				m.loadedModelName = msg.Data.Model.BaseName
 				m.loadedConfigName = msg.Data.ConfigName
-
-				if m.state == StateLoadingModel {
-					m.state = StateSuccess
-					m.message = fmt.Sprintf("✓ Model loaded successfully: %s", msg.Data.Model.BaseName)
-					m.messageTime = time.Now()
-				}
 			} else {
 				m.loadedModel = "None"
 				m.loadedModelName = ""
@@ -312,9 +319,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
 	case healthMsg:
 		m.health = msg.Status
 		return m, nil
+
 	case loadMsg:
 		if msg.Success {
 			m.state = StateSuccess
@@ -325,6 +334,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messageTime = time.Now()
 		return m, fetchStatus(m.baseURL)
+
 	case unloadMsg:
 		if msg.Success {
 			m.state = StateSuccess
@@ -335,25 +345,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messageTime = time.Now()
 		return m, fetchStatus(m.baseURL)
+
 	case successMsg:
 
-		if m.state == StateUnloadingModel {
-			m.state = StateSuccess
-			m.message = fmt.Sprintf("✓ Unload successful: %s", msg.message)
-			m.messageTime = time.Now()
-			return m, fetchStatus(m.baseURL) // 卸载成功后立即刷新状态
-		}
-
-		if m.state == StateLoadingModel {
-			m.message = fmt.Sprintf("Backend accepted. Initializing model (%s)...", msg.message)
-			return m, nil
-		}
-
 		m.state = StateSuccess
-		m.message = fmt.Sprintf("✓ %s (took: %v)", msg.message, msg.time)
+		m.message = fmt.Sprintf("✓ %s (Load time: %v)", msg.message, msg.time)
 		m.operationTime = msg.time
 		m.messageTime = time.Now()
+
 		return m, fetchStatus(m.baseURL)
+
 	case errorMsg:
 		m.state = StateError
 		m.message = fmt.Sprintf("✗ %s", string(msg))
@@ -602,7 +603,7 @@ func truncateString(s string, maxLen int) string {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
