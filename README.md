@@ -175,8 +175,6 @@ Patterns support:
 }
 ```
 
-# 
-
 ## Building lmgo (System Tray)
 
 Download the latest [`llama-b*-windows-rocm-gfx1151-x64.zip`](https://github.com/zyoung11/lmgo/releases) file from [releases](https://github.com/zyoung11/lmgo/releases) first and then
@@ -205,5 +203,3 @@ lmc uses an embedded configuration file `baseURL.json` that specifies the lmgo A
 ```
 
 **Note:** lmc automatically displays all model configurations from lmgo as separate entries in the terminal interface. Each configuration appears as an independent model option.
-
-# 
