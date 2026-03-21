@@ -797,11 +797,14 @@ func loadModel(idx int, configIndex int) error {
 		configIndex: configIndex,
 	}
 	if configIndex >= 0 {
+		var matchingConfigs []ModelConfig
 		for _, cfg := range config.ModelSpecificArgs {
 			if cfg.Target == entry.BaseName {
-				instance.configName = cfg.Name
-				break
+				matchingConfigs = append(matchingConfigs, cfg)
 			}
+		}
+		if configIndex < len(matchingConfigs) {
+			instance.configName = matchingConfigs[configIndex].Name
 		}
 	}
 

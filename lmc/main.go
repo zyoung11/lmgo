@@ -14,7 +14,7 @@ import (
 )
 
 //go:embed baseURL.json
-var configFS embed.FS
+var defaultConfigFS embed.FS
 
 type Config struct {
 	BaseURL string `json:"baseURL"`
@@ -231,23 +231,50 @@ func unloadModel(baseURL string) tea.Cmd {
 }
 
 func loadConfig() (string, error) {
-	data, err := configFS.ReadFile("baseURL.json")
+	configFile := "lmc.json"
+	fallbackFile := "baseURL.json"
+
+	if _, err := os.Stat(configFile); err == nil {
+		data, err := os.ReadFile(configFile)
+		if err != nil {
+			return "", err
+		}
+		var config Config
+		if err := json.Unmarshal(data, &config); err != nil {
+			return "", err
+		}
+		return config.BaseURL, nil
+	}
+
+	if _, err := os.Stat(fallbackFile); err == nil {
+		data, err := os.ReadFile(fallbackFile)
+		if err != nil {
+			return "", err
+		}
+		var config Config
+		if err := json.Unmarshal(data, &config); err != nil {
+			return "", err
+		}
+		return config.BaseURL, nil
+	}
+
+	defaultConfig := Config{
+		BaseURL: "http://127.0.0.1:8080",
+	}
+	data, err := json.MarshalIndent(defaultConfig, "", "  ")
 	if err != nil {
 		return "", err
 	}
-
-	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
+	if err := os.WriteFile(fallbackFile, data, 0644); err != nil {
 		return "", err
 	}
-
-	return config.BaseURL, nil
+	return defaultConfig.BaseURL, nil
 }
 
 func NewModel() Model {
 	baseURL, err := loadConfig()
 	if err != nil {
-		baseURL = "http://127.0.0.1:9696"
+		baseURL = "http://127.0.0.1:8080"
 	}
 
 	return Model{
