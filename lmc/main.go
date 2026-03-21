@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -230,9 +232,30 @@ func unloadModel(baseURL string) tea.Cmd {
 	}
 }
 
+func getExecutableDir() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+
+	if runtime.GOOS != "windows" {
+		exePath, err = filepath.EvalSymlinks(exePath)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return filepath.Dir(exePath), nil
+}
+
 func loadConfig() (string, error) {
-	configFile := "lmc.json"
-	fallbackFile := "baseURL.json"
+	exeDir, err := getExecutableDir()
+	if err != nil {
+		exeDir = "."
+	}
+
+	configFile := filepath.Join(exeDir, "lmc.json")
+	fallbackFile := filepath.Join(exeDir, "baseURL.json")
 
 	if _, err := os.Stat(configFile); err == nil {
 		data, err := os.ReadFile(configFile)
