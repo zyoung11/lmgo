@@ -402,7 +402,9 @@ func handleKeyMsg(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	case "up", "k":
 		if m.state == StateReady || m.state == StateModelSelected {
-			m.selectedIdx = max(0, m.selectedIdx-1)
+			if len(m.models) > 0 {
+				m.selectedIdx = (m.selectedIdx - 1 + len(m.models)) % len(m.models)
+			}
 			if m.state == StateReady {
 				m.state = StateModelSelected
 			}
@@ -411,7 +413,9 @@ func handleKeyMsg(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	case "down", "j":
 		if m.state == StateReady || m.state == StateModelSelected {
-			m.selectedIdx = min(len(m.models)-1, m.selectedIdx+1)
+			if len(m.models) > 0 {
+				m.selectedIdx = (m.selectedIdx + 1) % len(m.models)
+			}
 			if m.state == StateReady {
 				m.state = StateModelSelected
 			}

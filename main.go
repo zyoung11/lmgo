@@ -483,7 +483,9 @@ func handleLoad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runningModelsMu.RLock()
-	alreadyLoaded := runningModel != nil && runningModel.entry.Path == currentModels[modelIndex].Path
+	alreadyLoaded := runningModel != nil && 
+		runningModel.entry.Path == currentModels[modelIndex].Path && 
+		runningModel.configIndex == configIndex
 	runningModelsMu.RUnlock()
 	if alreadyLoaded {
 		writeJSON(w, http.StatusOK, APIResponse{Success: true, Message: "Model already loaded", Data: currentModels[modelIndex]})
